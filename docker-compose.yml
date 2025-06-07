@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: anime_streamer_db
+    environment:
+      POSTGRES_DB: anime_streamer
+      POSTGRES_USER: anime_user
+      POSTGRES_PASSWORD: your_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

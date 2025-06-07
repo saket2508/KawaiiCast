@@ -12,7 +12,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Update video src when videoSrc changes
   useEffect(() => {
     if (videoRef.current && videoSrc) {
-      console.log("Setting video src to:", videoSrc);
       videoRef.current.src = videoSrc;
       videoRef.current.load(); // Force reload with new src
     }
