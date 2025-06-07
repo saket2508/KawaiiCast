@@ -14,6 +14,7 @@ interface TorrentInfo {
   name: string;
   infoHash: string;
   magnetURI: string;
+  torrentId: string;
   files: TorrentFile[];
   totalSize: number;
   progress: number;
@@ -21,6 +22,7 @@ interface TorrentInfo {
   uploadSpeed: string;
   numPeers: number;
   ready: boolean;
+  uploadedFileName?: string;
 }
 
 const BACKEND_URL = "http://localhost:8080"; // Adjust as needed
@@ -33,7 +35,7 @@ export const useTorrentStream = () => {
   const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const currentMagnetRef = useRef<string | null>(null);
+  const currentTorrentIdRef = useRef<string | null>(null);
 
   // File type checking is now handled by the backend
 
@@ -45,23 +47,50 @@ export const useTorrentStream = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  const getTorrentInfo = async (magnet: string) => {
+  const getTorrentInfo = async (magnetOrFile: string | ArrayBuffer) => {
     setIsLoading(true);
     setMessage("Fetching torrent information...");
 
     try {
-      const response = await fetch(
-        `${BACKEND_URL}/torrent/info?magnet=${encodeURIComponent(magnet)}`
-      );
+      let response: Response;
+
+      if (typeof magnetOrFile === "string") {
+        // Handle magnet URI - use POST for consistency
+        response = await fetch(`${BACKEND_URL}/torrent/info`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            magnet: magnetOrFile,
+          }),
+        });
+      } else {
+        // Handle .torrent file (ArrayBuffer)
+        console.log("Processing torrent file...");
+        setMessage("Processing torrent file...");
+        const formData = new FormData();
+        const blob = new Blob([magnetOrFile], {
+          type: "application/x-bittorrent",
+        });
+        formData.append("torrent", blob, "torrent.torrent"); // Fixed field name
+
+        response = await fetch(`${BACKEND_URL}/torrent/info`, {
+          method: "POST",
+          body: formData,
+        });
+      }
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || "Failed to get torrent info");
+        throw new Error(error.error || "Failed to get torrent info");
       }
 
       const info: TorrentInfo = await response.json();
       setTorrentInfo(info);
-      currentMagnetRef.current = magnet;
+
+      // Store the torrent ID for all future operations
+      currentTorrentIdRef.current = info.torrentId;
 
       // Find the best playable file (backend already sorted them)
       const playableFiles = info.files.filter((file) => file.isPlayable);
@@ -69,11 +98,11 @@ export const useTorrentStream = () => {
 
       if (bestFile) {
         setSelectedFileIndex(bestFile.index);
-        setMessage(
-          `Found playable file: ${bestFile.name} (${formatBytes(
-            bestFile.size
-          )})`
-        );
+        const fileTypeMessage =
+          typeof magnetOrFile === "string"
+            ? `Found playable file: ${bestFile.name}`
+            : `Found playable file in ${info.uploadedFileName}: ${bestFile.name}`;
+        setMessage(`${fileTypeMessage} (${formatBytes(bestFile.size)})`);
       } else {
         setMessage(
           "❌ No playable video or audio files found in this torrent."
@@ -90,13 +119,8 @@ export const useTorrentStream = () => {
   };
 
   const startStreaming = (fileIndex?: number) => {
-    console.log("Starting streaming");
-    console.log(currentMagnetRef.current);
-    console.log(selectedFileIndex);
-    console.log(fileIndex);
-
-    if (!currentMagnetRef.current) {
-      setMessage("No torrent loaded");
+    if (!currentTorrentIdRef.current) {
+      setMessage("No valid torrent loaded");
       return;
     }
 
@@ -114,14 +138,11 @@ export const useTorrentStream = () => {
     }
 
     setMessage(`Starting stream for: ${file.name}`);
-    console.log(`Starting stream for: ${file.name}`);
 
-    // Construct streaming URL
-    const streamUrl = `${BACKEND_URL}/stream?magnet=${encodeURIComponent(
-      currentMagnetRef.current
+    // Construct streaming URL using torrentId
+    const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+      currentTorrentIdRef.current
     )}&file_index=${indexToUse}`;
-
-    console.log(`Hitting Stream URL: ${streamUrl}`);
 
     setVideoSrc(streamUrl);
     setSelectedFileIndex(indexToUse);
@@ -153,12 +174,12 @@ export const useTorrentStream = () => {
   };
 
   const stopStreaming = async () => {
-    if (!currentMagnetRef.current) return;
+    if (!currentTorrentIdRef.current) return;
 
     try {
       await fetch(
-        `${BACKEND_URL}/stream?magnet=${encodeURIComponent(
-          currentMagnetRef.current
+        `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+          currentTorrentIdRef.current
         )}&file_index=${selectedFileIndex}`,
         { method: "DELETE" }
       );
@@ -177,14 +198,14 @@ export const useTorrentStream = () => {
   };
 
   const loadTorrent = async (magnetOrFile: string | ArrayBuffer) => {
-    // For now, only handle magnet URIs
-    if (typeof magnetOrFile !== "string") {
-      setMessage("File torrents not yet supported with backend streaming");
-      return;
-    }
-
-    if (!magnetOrFile.startsWith("magnet:")) {
-      setMessage("Please provide a valid magnet URI");
+    // Validate input
+    if (typeof magnetOrFile === "string") {
+      if (!magnetOrFile.startsWith("magnet:")) {
+        setMessage("Please provide a valid magnet URI");
+        return;
+      }
+    } else if (!(magnetOrFile instanceof ArrayBuffer)) {
+      setMessage("Invalid file format. Please provide a .torrent file.");
       return;
     }
 
@@ -197,11 +218,25 @@ export const useTorrentStream = () => {
   };
 
   const removeTorrent = async () => {
+    if (currentTorrentIdRef.current) {
+      try {
+        // Remove torrent from backend using torrentId
+        await fetch(
+          `${BACKEND_URL}/torrent?torrent_id=${encodeURIComponent(
+            currentTorrentIdRef.current
+          )}`,
+          { method: "DELETE" }
+        );
+      } catch (error) {
+        console.error("Error removing torrent:", error);
+      }
+    }
+
     await stopStreaming();
     setTorrentInfo(null);
     setVideoSrc(null);
     setMessage("");
-    currentMagnetRef.current = null;
+    currentTorrentIdRef.current = null;
     setSelectedFileIndex(0);
   };
 

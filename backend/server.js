@@ -4,12 +4,32 @@ import WebTorrent from "webtorrent";
 import rangeParser from "range-parser";
 import mime from "mime-types";
 import morgan from "morgan";
+import multer from "multer";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Initialize WebTorrent client
 const client = new WebTorrent();
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept .torrent files
+    if (
+      file.originalname.endsWith(".torrent") ||
+      file.mimetype === "application/x-bittorrent"
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only .torrent files are allowed"), false);
+    }
+  },
+});
 
 // Storage for active torrents and streams
 const activeTorrents = new Map(); // magnetURI -> torrent object
@@ -23,7 +43,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "50mb" })); // Increase limit for torrent files
 
 // Utility functions
 const formatBytes = (bytes) => {
@@ -34,8 +54,8 @@ const formatBytes = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 };
 
-const getStreamId = (magnetURI, fileIndex) => {
-  return `${Buffer.from(magnetURI)
+const getStreamId = (torrentIdentifier, fileIndex) => {
+  return `${Buffer.from(torrentIdentifier)
     .toString("base64")
     .slice(0, 16)}_${fileIndex}`;
 };
@@ -65,6 +85,15 @@ const isAudioFile = (filename) => {
 client.on("error", (err) => {
   console.error("WebTorrent client error:", err);
 });
+
+// Utility function to generate a unique identifier for torrents
+const getTorrentId = (input) => {
+  if (typeof input === "string" && input.startsWith("magnet:")) {
+    return input; // Use magnet URI directly
+  }
+  // For torrent files, create a hash-based identifier
+  return `torrent_${Buffer.from(input).toString("base64").slice(0, 32)}`;
+};
 
 // API Routes
 
@@ -165,21 +194,155 @@ app.get("/torrent/info", async (req, res) => {
   }
 });
 
-// Stream torrent file
-app.get("/stream", async (req, res) => {
-  const { magnet, file_index } = req.query;
-  const fileIndex = parseInt(file_index) || 0;
+// Get torrent info (supports both magnet URIs and torrent files)
+app.post("/torrent/info", upload.single("torrent"), async (req, res) => {
+  let torrentInput;
+  let torrentId;
+  let isFileUpload = false;
 
-  console.log(
-    `Stream request: magnet=${magnet?.slice(0, 50)}..., file_index=${fileIndex}`
-  );
+  // Handle file upload
+  if (req.file) {
+    torrentInput = req.file.buffer;
+    torrentId = getTorrentId(torrentInput);
+    isFileUpload = true;
+    console.log("Processing uploaded torrent file:", req.file.originalname);
+  }
+  // Handle JSON payload
+  else if (req.body) {
+    const { magnet, torrentData } = req.body;
 
-  if (!magnet) {
-    return res.status(400).json({ error: "Magnet URI is required" });
+    // Validate input - either magnet or torrentData is required
+    if (!magnet && !torrentData) {
+      return res.status(400).json({
+        error:
+          "Either magnet URI, torrent file data, or file upload is required",
+      });
+    }
+
+    if (magnet && !magnet.startsWith("magnet:")) {
+      return res.status(400).json({ error: "Invalid magnet URI" });
+    }
+
+    torrentInput = magnet || Buffer.from(torrentData, "base64");
+    torrentId = getTorrentId(torrentInput);
+    console.log(
+      "Processing torrent:",
+      magnet ? magnet.slice(0, 100) + "..." : "from base64 data"
+    );
+  }
+  // No valid input
+  else {
+    return res.status(400).json({
+      error: "Either magnet URI, torrent file data, or file upload is required",
+    });
   }
 
   try {
-    const torrent = activeTorrents.get(magnet);
+    // Check if we already have this torrent
+    let torrent = activeTorrents.get(torrentId);
+
+    if (!torrent) {
+      // Add new torrent
+      torrent = await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error("Timeout: Could not fetch torrent metadata"));
+        }, 30000);
+
+        const newTorrent = client.add(torrentInput, {
+          destroyStoreOnDestroy: true,
+          storeCacheSlots: 20,
+        });
+
+        newTorrent.on("ready", () => {
+          clearTimeout(timeoutId);
+          console.log("Torrent ready:", newTorrent.name);
+          activeTorrents.set(torrentId, newTorrent);
+          resolve(newTorrent);
+        });
+
+        newTorrent.on("error", (err) => {
+          clearTimeout(timeoutId);
+          console.error("Torrent error:", err);
+          reject(err);
+        });
+      });
+    }
+
+    // Prepare file information
+    const files = torrent.files.map((file, index) => ({
+      index,
+      name: file.name,
+      size: file.length,
+      path: file.path,
+      isVideo: isVideoFile(file.name),
+      isAudio: isAudioFile(file.name),
+      isPlayable: isVideoFile(file.name) || isAudioFile(file.name),
+    }));
+
+    // Sort files: playable first, then by size
+    files.sort((a, b) => {
+      if (a.isPlayable && !b.isPlayable) return -1;
+      if (!a.isPlayable && b.isPlayable) return 1;
+      return b.size - a.size;
+    });
+
+    const response = {
+      name: torrent.name,
+      infoHash: torrent.infoHash,
+      magnetURI: torrent.magnetURI,
+      torrentId, // Include the ID we use internally
+      files,
+      totalSize: torrent.length,
+      progress: Math.round(torrent.progress * 100),
+      downloadSpeed: formatBytes(torrent.downloadSpeed),
+      uploadSpeed: formatBytes(torrent.uploadSpeed),
+      numPeers: torrent.numPeers,
+      ready: torrent.ready,
+    };
+
+    // Add upload info if it was a file upload
+    if (isFileUpload) {
+      response.uploadedFileName = req.file.originalname;
+    }
+
+    res.json(response);
+  } catch (error) {
+    console.error("Error getting torrent info:", error);
+    res.status(500).json({
+      error: error.message || "Failed to get torrent information",
+    });
+  }
+});
+
+// Stream torrent file
+app.get("/stream", async (req, res) => {
+  const { magnet, torrent_id, file_index } = req.query;
+  const fileIndex = parseInt(file_index) || 0;
+
+  // Support both magnet URI and torrent ID
+  const torrentIdentifier = magnet || torrent_id;
+
+  console.log(
+    `Stream request: identifier=${torrentIdentifier?.slice(
+      0,
+      50
+    )}..., file_index=${fileIndex}`
+  );
+
+  if (!torrentIdentifier) {
+    return res.status(400).json({
+      error: "Either magnet URI or torrent_id is required",
+    });
+  }
+
+  try {
+    // Try to find torrent by magnet URI first, then by torrent ID
+    let torrent = activeTorrents.get(torrentIdentifier);
+
+    // If not found and it's a magnet URI, try to find by magnet
+    if (!torrent && magnet) {
+      torrent = activeTorrents.get(magnet);
+    }
 
     if (!torrent) {
       return res
@@ -199,14 +362,14 @@ app.get("/stream", async (req, res) => {
       return res.status(404).json({ error: "File not found" });
     }
 
-    const streamId = getStreamId(magnet, fileIndex);
+    const streamId = getStreamId(torrentIdentifier, fileIndex);
     console.log(
       `Starting stream for: ${file.name} (${formatBytes(file.length)})`
     );
 
     // Store stream info
     activeStreams.set(streamId, {
-      magnet,
+      torrentIdentifier,
       fileIndex,
       fileName: file.name,
       fileSize: file.length,
@@ -283,9 +446,17 @@ app.get("/stream", async (req, res) => {
 
 // Stop stream
 app.delete("/stream", (req, res) => {
-  const { magnet, file_index } = req.query;
+  const { magnet, torrent_id, file_index } = req.query;
   const fileIndex = parseInt(file_index) || 0;
-  const streamId = getStreamId(magnet, fileIndex);
+  const torrentIdentifier = magnet || torrent_id;
+
+  if (!torrentIdentifier) {
+    return res.status(400).json({
+      error: "Either magnet URI or torrent_id is required",
+    });
+  }
+
+  const streamId = getStreamId(torrentIdentifier, fileIndex);
 
   if (activeStreams.has(streamId)) {
     activeStreams.delete(streamId);
@@ -312,26 +483,43 @@ app.get("/streams", (req, res) => {
 
 // Remove torrent
 app.delete("/torrent", (req, res) => {
-  const { magnet } = req.query;
+  const { magnet, torrent_id } = req.query;
+  const torrentIdentifier = magnet || torrent_id;
 
-  if (!magnet) {
-    return res.status(400).json({ error: "Magnet URI is required" });
+  if (!torrentIdentifier) {
+    return res.status(400).json({
+      error: "Either magnet URI or torrent_id is required",
+    });
   }
 
-  const torrent = activeTorrents.get(magnet);
+  // Try to find torrent by identifier
+  let torrent = activeTorrents.get(torrentIdentifier);
+  let actualKey = torrentIdentifier;
+
+  // If not found and we have a magnet, try to find by magnet
+  if (!torrent && magnet) {
+    torrent = activeTorrents.get(magnet);
+    actualKey = magnet;
+  }
+
   if (torrent) {
     console.log("Removing torrent:", torrent.name);
 
-    // Stop all related streams
+    // Stop all related streams - check both magnet and torrent_id
     const streamsToStop = Array.from(activeStreams.entries())
-      .filter(([_, info]) => info.magnet === magnet)
+      .filter(
+        ([_, info]) =>
+          info.torrentIdentifier === torrentIdentifier ||
+          (magnet && info.magnet === magnet) ||
+          info.magnet === torrentIdentifier // backwards compatibility
+      )
       .map(([id]) => id);
 
     streamsToStop.forEach((id) => activeStreams.delete(id));
 
     // Remove torrent
     torrent.destroy();
-    activeTorrents.delete(magnet);
+    activeTorrents.delete(actualKey);
 
     res.json({
       message: "Torrent removed",
