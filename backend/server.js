@@ -18,7 +18,25 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Initialize WebTorrent client
-const client = new WebTorrent();
+const client = new WebTorrent({
+  dht: true,
+  tracker: {
+    announce: [
+      "udp://tracker.openbittorrent.com:80",
+      "udp://tracker.opentrackr.org:1337",
+      "udp://9.rarbg.to:2710",
+      "udp://exodus.desync.com:6969",
+      "udp://tracker.torrent.eu.org:451",
+      "udp://tracker.tiny-vps.com:6969",
+      "udp://open.stealth.si:80",
+      "udp://explodie.org:6969",
+    ],
+    announceInterval: 15 * 60 * 1000,
+    announceTimeout: 15000,
+  },
+  utp: true,
+  maxConns: 200,
+});
 
 // Configure multer for file uploads
 const upload = multer({
@@ -248,13 +266,12 @@ app.post("/torrent/info", upload.single("torrent"), async (req, res) => {
   try {
     // Check if we already have this torrent
     let torrent = activeTorrents.get(torrentId);
-
     if (!torrent) {
       // Add new torrent
       torrent = await new Promise((resolve, reject) => {
         const timeoutId = setTimeout(() => {
           reject(new Error("Timeout: Could not fetch torrent metadata"));
-        }, 30000);
+        }, 60000); // one minute timeout
 
         const newTorrent = client.add(torrentInput, {
           destroyStoreOnDestroy: true,

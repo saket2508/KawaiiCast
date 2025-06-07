@@ -1,7 +1,7 @@
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 
-const NYAA_BASE_URL = "https://nyaa.si";
+const NYAA_BASE_URL = "http://nyaa.si";
 const NYAA_SEARCH_URL = `${NYAA_BASE_URL}/?page=rss&q=`;
 
 // Parse episode number from title
@@ -92,30 +92,37 @@ export const searchTorrents = async (query, category = "1_2") => {
       const description = $item.find("description").text();
       const pubDate = $item.find("pubDate").text();
 
-      // Extract magnet URI from description
-      const magnetMatch = description.match(/magnet:\?[^"]+/);
-      const magnet = magnetMatch ? magnetMatch[0] : null;
+      // Extract data from Nyaa-specific XML fields
+      const infoHash = $item.find("nyaa\\:infoHash, infoHash").text();
+      const seeders =
+        parseInt($item.find("nyaa\\:seeders, seeders").text()) || 0;
+      const leechers =
+        parseInt($item.find("nyaa\\:leechers, leechers").text()) || 0;
+      const sizeText = $item.find("nyaa\\:size, size").text() || "Unknown";
 
-      // Extract seeders/leechers from description
-      const seedersMatch = description.match(/Seeders:\s*(\d+)/);
-      const leechersMatch = description.match(/Leechers:\s*(\d+)/);
-      const sizeMatch = description.match(/Size:\s*([0-9.]+ [A-Z]+)/i);
-
-      if (magnet) {
-        torrents.push({
-          title: title.trim(),
-          magnet,
-          link,
-          size: parseFileSize(sizeMatch ? sizeMatch[1] : "0 B"),
-          sizeText: sizeMatch ? sizeMatch[1] : "Unknown",
-          seeders: seedersMatch ? parseInt(seedersMatch[1]) : 0,
-          leechers: leechersMatch ? parseInt(leechersMatch[1]) : 0,
-          publishDate: new Date(pubDate),
-          episodeNumber: parseEpisodeNumber(title),
-          quality: parseQuality(title),
-          releaseGroup: parseReleaseGroup(title),
-        });
+      // Create magnet URI from info hash if available
+      let magnet = null;
+      if (infoHash) {
+        magnet = `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(
+          title
+        )}`;
       }
+
+      // Always add torrent entry (don't filter by magnet existence since we can generate it)
+      torrents.push({
+        title: title.trim(),
+        magnet,
+        infoHash,
+        link,
+        size: parseFileSize(sizeText),
+        sizeText,
+        seeders,
+        leechers,
+        publishDate: new Date(pubDate),
+        episodeNumber: parseEpisodeNumber(title),
+        quality: parseQuality(title),
+        releaseGroup: parseReleaseGroup(title),
+      });
     });
 
     console.log(`✅ Found ${torrents.length} torrents for "${query}"`);
