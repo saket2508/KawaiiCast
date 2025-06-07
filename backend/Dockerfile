@@ -1,15 +1,23 @@
-FROM python:3.10-slim
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
 
 # Install dependencies
-RUN apt update && apt install -y curl gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt install -y nodejs && \
-    npm install -g webtorrent-cli && \
-    pip install fastapi "uvicorn[standard]" && \
-    apt clean
+RUN npm ci --only=production
 
-WORKDIR /app
-COPY . /app
+# Copy application code
+COPY . .
 
+# Expose port
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8080/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+
+# Start the application
+CMD ["npm", "start"] 
