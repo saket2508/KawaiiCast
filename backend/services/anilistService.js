@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 
 const ANILIST_API_URL = "https://graphql.anilist.co";
+const JIKAN_API_URL = "https://api.jikan.moe/v4/anime";
 
 // GraphQL queries
 const SEARCH_ANIME_QUERY = `
