@@ -1,5 +1,6 @@
 import { query } from "../services/database.js";
 import * as anilistService from "../services/anilistService.js";
+import * as jikanService from "../services/jikanService.js";
 import * as torrentService from "../services/torrentService.js";
 import { formatBytes } from "../utils/helpers.js";
 
@@ -88,7 +89,6 @@ export const getPopularAnime = async (req, res) => {
 };
 
 // Get anime details
-// TODO: GET the MAL_ID from JIKAN_API_URL and store it in the database.
 export const getAnimeDetails = async (req, res) => {
   try {
     const { id } = req.params;
@@ -102,17 +102,16 @@ export const getAnimeDetails = async (req, res) => {
 
     // Get from AniList
     const animeDetails = await anilistService.getAnimeDetails(animeId);
-
     // Cache in database
     try {
-      // TODO: fix updated_now column does not exist relation to anime table
       await query(
         `
         INSERT INTO anime (
-          anilist_id, title, title_english, description, cover_image, 
+          anilist_id, mal_id, title, title_english, description, cover_image, 
           banner_image, episodes, status, year, genres, score
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (anilist_id) DO UPDATE SET
+          mal_id = EXCLUDED.mal_id,
           title = EXCLUDED.title,
           title_english = EXCLUDED.title_english,
           description = EXCLUDED.description,
@@ -126,7 +125,8 @@ export const getAnimeDetails = async (req, res) => {
           updated_at = NOW() 
       `,
         [
-          animeDetails.anilistId,
+          animeDetails.id,
+          animeDetails.malId,
           animeDetails.title,
           animeDetails.titleEnglish,
           animeDetails.description,
@@ -177,7 +177,7 @@ export const getAnimeTorrents = async (req, res) => {
       return res.status(404).json({ error: "Anime not found" });
     }
 
-    const animeTitle = anime.title_english || anime.title || anime.titleEnglish;
+    const animeTitle = anime.titleEnglish || anime.title;
     const episodeNumber = episode ? parseInt(episode) : null;
 
     // Search torrents
@@ -225,11 +225,11 @@ export const getAnimeTorrents = async (req, res) => {
   }
 };
 
-// Get episodes for an anime
-// TODO: use JIKAN_API_URL for fetching list of episodes with pagination
+// Get episodes for an anime with detailed metadata from JIKAN API
 export const getAnimeEpisodes = async (req, res) => {
   try {
     const { id } = req.params;
+    const { page = 1 } = req.query;
     const animeId = parseInt(id);
 
     if (!animeId) {
@@ -238,40 +238,260 @@ export const getAnimeEpisodes = async (req, res) => {
 
     console.log(`📋 Fetching episodes for anime ${animeId}`);
 
-    // Get anime details
+    // Get anime details (which now includes MAL ID)
     const anime = await getAnimeFromCacheOrApi(animeId);
     if (!anime) {
       return res.status(404).json({ error: "Anime not found" });
     }
 
-    // Generate episode list
-    const episodes = [];
-    const totalEpisodes = anime.episodes || 12; // Default to 12 if unknown
+    let episodes = [];
+    let pagination = {};
+    const totalEpisodes = anime.episodes || 12;
 
-    for (let i = 1; i <= totalEpisodes; i++) {
-      const torrents = await getCachedTorrentsForEpisode(animeId, i);
+    // Try to get detailed episodes from JIKAN API if we have MAL ID
+    if (anime.malId) {
+      try {
+        const malId = anime.malId;
+        console.log(
+          `🔍 Fetching episode details from JIKAN for MAL ID: ${malId}`
+        );
 
-      episodes.push({
-        number: i,
-        title: `Episode ${i}`,
-        torrents: torrents,
-        hasTorrents: torrents.length > 0,
-      });
+        const episodeData = await jikanService.getAnimeEpisodes(
+          malId,
+          parseInt(page)
+        );
+
+        if (episodeData.episodes && episodeData.episodes.length > 0) {
+          // Cache episodes and add torrent data
+          const episodesWithTorrents = await Promise.all(
+            episodeData.episodes.map(async (episode) => {
+              // Cache episode data in database
+              await cacheEpisodeInDatabase(animeId, episode);
+
+              // Get torrents for this episode
+              const torrents = await getCachedTorrentsForEpisode(
+                animeId,
+                episode.number
+              );
+              return {
+                ...episode,
+                torrents: torrents,
+                hasTorrents: torrents.length > 0,
+              };
+            })
+          );
+
+          episodes = episodesWithTorrents;
+          pagination = episodeData.pagination;
+        }
+      } catch (jikanError) {
+        console.warn(
+          "⚠️ Failed to fetch from JIKAN API, falling back to basic episode list:",
+          jikanError.message
+        );
+      }
+    }
+
+    // Fallback: Generate basic episode list if JIKAN API failed or no MAL ID
+    if (episodes.length === 0) {
+      for (let i = 1; i <= totalEpisodes; i++) {
+        const torrents = await getCachedTorrentsForEpisode(animeId, i);
+
+        episodes.push({
+          number: i,
+          title: `Episode ${i}`,
+          aired: null,
+          filler: false,
+          recap: false,
+          synopsis: null,
+          torrents: torrents,
+          hasTorrents: torrents.length > 0,
+        });
+      }
     }
 
     res.json({
       success: true,
       anime: {
         id: animeId,
-        title: anime.title_english || anime.title || anime.titleEnglish,
+        title: anime.titleEnglish || anime.title,
+        malId: anime.malId,
         totalEpisodes: totalEpisodes,
       },
       episodes: episodes,
+      pagination: pagination,
+      page: parseInt(page),
     });
   } catch (error) {
     console.error("❌ Episodes error:", error);
     res.status(500).json({
       error: "Failed to fetch episodes",
+      message: error.message,
+    });
+  }
+};
+
+// Get specific episode details
+export const getEpisodeDetails = async (req, res) => {
+  try {
+    const { id, episodeNumber } = req.params;
+    const animeId = parseInt(id);
+    const epNumber = parseInt(episodeNumber);
+
+    if (!animeId || !epNumber) {
+      return res.status(400).json({
+        error: "Valid anime ID and episode number are required",
+      });
+    }
+
+    console.log(`📺 Fetching episode ${epNumber} details for anime ${animeId}`);
+
+    // Get anime details to get MAL ID
+    const anime = await getAnimeFromCacheOrApi(animeId);
+    if (!anime) {
+      return res.status(404).json({ error: "Anime not found" });
+    }
+
+    // First try to get from database cache
+    let episodeDetails = await getCachedEpisodeFromDatabase(animeId, epNumber);
+
+    // If not cached and we have MAL ID, fetch from JIKAN API
+    if (!episodeDetails && anime.malId) {
+      try {
+        const malId = anime.malId;
+        episodeDetails = await jikanService.getEpisodeDetails(malId, epNumber);
+
+        // Cache the episode data if we got it successfully
+        if (episodeDetails) {
+          await cacheEpisodeInDatabase(animeId, episodeDetails);
+        }
+      } catch (jikanError) {
+        console.warn(
+          "⚠️ Failed to fetch episode details from JIKAN API:",
+          jikanError.message
+        );
+      }
+    }
+
+    // Fallback to basic episode info if both cache and API failed
+    if (!episodeDetails) {
+      episodeDetails = {
+        number: epNumber,
+        title: `Episode ${epNumber}`,
+        aired: null,
+        filler: false,
+        recap: false,
+        synopsis: null,
+      };
+    }
+
+    // Get torrents for this episode
+    const torrents = await getCachedTorrentsForEpisode(animeId, epNumber);
+
+    res.json({
+      success: true,
+      anime: {
+        id: animeId,
+        title: anime.titleEnglish || anime.title,
+        malId: anime.malId,
+      },
+      episode: {
+        ...episodeDetails,
+        torrents: torrents,
+        hasTorrents: torrents.length > 0,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Episode details error:", error);
+    res.status(500).json({
+      error: "Failed to fetch episode details",
+      message: error.message,
+    });
+  }
+};
+
+// Get anime with all detailed episodes (convenience endpoint)
+export const getAnimeWithAllEpisodes = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const animeId = parseInt(id);
+
+    if (!animeId) {
+      return res.status(400).json({ error: "Valid anime ID is required" });
+    }
+
+    console.log(`📚 Fetching complete anime data with episodes for ${animeId}`);
+
+    // Get anime details
+    const anime = await getAnimeFromCacheOrApi(animeId);
+    if (!anime) {
+      return res.status(404).json({ error: "Anime not found" });
+    }
+
+    let allEpisodes = [];
+
+    // Try to get all detailed episodes from JIKAN API if we have MAL ID
+    if (anime.malId) {
+      try {
+        const malId = anime.malId;
+        console.log(`🔍 Fetching all episodes from JIKAN for MAL ID: ${malId}`);
+
+        const episodes = await jikanService.getAllAnimeEpisodes(malId);
+
+        // Cache episodes and add torrent data
+        allEpisodes = await Promise.all(
+          episodes.map(async (episode) => {
+            await cacheEpisodeInDatabase(animeId, episode);
+            const torrents = await getCachedTorrentsForEpisode(
+              animeId,
+              episode.number
+            );
+            return {
+              ...episode,
+              torrents: torrents,
+              hasTorrents: torrents.length > 0,
+            };
+          })
+        );
+      } catch (jikanError) {
+        console.warn(
+          "⚠️ Failed to fetch all episodes from JIKAN API:",
+          jikanError.message
+        );
+      }
+    }
+
+    // Fallback: Generate basic episode list if JIKAN API failed
+    if (allEpisodes.length === 0) {
+      const totalEpisodes = anime.episodes || 12;
+      for (let i = 1; i <= totalEpisodes; i++) {
+        const torrents = await getCachedTorrentsForEpisode(animeId, i);
+        allEpisodes.push({
+          number: i,
+          title: `Episode ${i}`,
+          aired: null,
+          filler: false,
+          recap: false,
+          synopsis: null,
+          torrents: torrents,
+          hasTorrents: torrents.length > 0,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      anime: {
+        ...anime,
+        totalEpisodes: allEpisodes.length,
+      },
+      episodes: allEpisodes,
+      episodeCount: allEpisodes.length,
+    });
+  } catch (error) {
+    console.error("❌ Complete anime data error:", error);
+    res.status(500).json({
+      error: "Failed to fetch complete anime data",
       message: error.message,
     });
   }
@@ -321,7 +541,23 @@ const getAnimeFromCacheOrApi = async (animeId) => {
     ]);
 
     if (dbResult.rows.length > 0) {
-      return dbResult.rows[0];
+      const anime = dbResult.rows[0];
+      // Normalize DB result to match API result from formatAnimeData
+      return {
+        id: anime.anilist_id,
+        anilistId: anime.anilist_id,
+        malId: anime.mal_id,
+        title: anime.title,
+        titleEnglish: anime.title_english,
+        description: anime.description,
+        coverImage: anime.cover_image,
+        bannerImage: anime.banner_image,
+        episodes: anime.episodes,
+        status: anime.status,
+        year: anime.year,
+        genres: anime.genres,
+        score: anime.score,
+      };
     }
 
     // Fetch from AniList if not in cache
@@ -390,5 +626,76 @@ const cacheTorrentsInDatabase = async (animeId, torrents) => {
     } catch (dbError) {
       console.warn("⚠️ Failed to cache torrent:", dbError.message);
     }
+  }
+};
+
+const cacheEpisodeInDatabase = async (animeId, episode) => {
+  try {
+    await query(
+      `
+      INSERT INTO anime_episodes (
+        anime_id, episode_number, title, title_japanese, title_romaji,
+        synopsis, air_date, score, filler, recap, forum_url
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (anime_id, episode_number) DO UPDATE SET
+        title = EXCLUDED.title,
+        title_japanese = EXCLUDED.title_japanese,
+        title_romaji = EXCLUDED.title_romaji,
+        synopsis = EXCLUDED.synopsis,
+        air_date = EXCLUDED.air_date,
+        score = EXCLUDED.score,
+        filler = EXCLUDED.filler,
+        recap = EXCLUDED.recap,
+        forum_url = EXCLUDED.forum_url,
+        updated_at = NOW()
+    `,
+      [
+        animeId,
+        episode.number,
+        episode.title,
+        episode.titleJapanese,
+        episode.titleRomaji,
+        episode.synopsis,
+        episode.aired,
+        episode.score,
+        episode.filler,
+        episode.recap,
+        episode.forumUrl,
+      ]
+    );
+  } catch (dbError) {
+    console.warn("⚠️ Failed to cache episode:", dbError.message);
+  }
+};
+
+const getCachedEpisodeFromDatabase = async (animeId, episodeNumber) => {
+  try {
+    const result = await query(
+      `
+      SELECT * FROM anime_episodes 
+      WHERE anime_id = $1 AND episode_number = $2
+    `,
+      [animeId, episodeNumber]
+    );
+
+    if (result.rows.length > 0) {
+      const episode = result.rows[0];
+      return {
+        number: episode.episode_number,
+        title: episode.title,
+        titleJapanese: episode.title_japanese,
+        titleRomaji: episode.title_romaji,
+        synopsis: episode.synopsis,
+        aired: episode.air_date,
+        score: episode.score ? parseFloat(episode.score) : null,
+        filler: episode.filler,
+        recap: episode.recap,
+        forumUrl: episode.forum_url,
+      };
+    }
+    return null;
+  } catch (error) {
+    console.warn("⚠️ Failed to get cached episode:", error.message);
+    return null;
   }
 };

@@ -3,8 +3,9 @@
 
 -- Core anime information
 CREATE TABLE anime (
-    id INTEGER PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     anilist_id INTEGER UNIQUE NOT NULL,
+    mal_id INTEGER,
     title VARCHAR(500) NOT NULL,
     title_english VARCHAR(500),
     description TEXT,
@@ -15,7 +16,8 @@ CREATE TABLE anime (
     year INTEGER,
     genres TEXT,
     score INTEGER,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Episode tracking
@@ -24,7 +26,16 @@ CREATE TABLE anime_episodes (
     anime_id INTEGER REFERENCES anime(id),
     episode_number INTEGER NOT NULL,
     title VARCHAR(500),
+    title_japanese VARCHAR(500),
+    title_romaji VARCHAR(500),
+    synopsis TEXT,
     air_date DATE,
+    score DECIMAL(3,2),
+    filler BOOLEAN DEFAULT FALSE,
+    recap BOOLEAN DEFAULT FALSE,
+    forum_url VARCHAR(500),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(anime_id, episode_number)
 );
 
@@ -55,5 +66,6 @@ CREATE TABLE watch_history (
 -- Create indexes for performance
 CREATE INDEX idx_anime_title ON anime(title);
 CREATE INDEX idx_anime_anilist ON anime(anilist_id);
+CREATE INDEX idx_anime_mal ON anime(mal_id);
 CREATE INDEX idx_episode_torrents_anime ON episode_torrents(anime_id, episode_number);
 CREATE INDEX idx_watch_history_session ON watch_history(session_id); 

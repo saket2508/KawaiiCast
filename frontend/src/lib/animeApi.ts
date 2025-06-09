@@ -1,4 +1,4 @@
-import { Anime } from "@/types/api";
+import { Anime, Episode } from "@/types/api";
 
 // Get API base URL from environment variable or fallback to relative path
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
@@ -38,21 +38,17 @@ interface AnimeEpisodesResponse {
     title: string;
     totalEpisodes: number;
   };
-  episodes: Array<{
-    number: number;
-    title: string;
-    torrents: Array<{
-      title: string;
-      magnet: string;
-      size: number;
-      sizeText: string;
-      seeders: number;
-      quality: string;
-      releaseGroup: string;
-      episodeNumber: number;
-    }>;
-    hasTorrents: boolean;
-  }>;
+  episodes: Episode[];
+  pagination?: {
+    has_next_page: boolean;
+    current_page: number;
+    items: {
+      count: number;
+      total: number;
+      per_page: number;
+    };
+  };
+  page?: number;
 }
 
 // Generic API error handling
@@ -135,13 +131,16 @@ export const animeApi = {
   },
 
   // Get anime episodes by ID
-  getEpisodes: async (id: number): Promise<AnimeEpisodesResponse> => {
+  getEpisodes: async (
+    id: number,
+    page: number = 1
+  ): Promise<AnimeEpisodesResponse> => {
     if (!id || id <= 0) {
       throw new ApiError("Invalid anime ID", 400);
     }
 
     const response = await apiRequest<AnimeEpisodesResponse>(
-      `/anime/${id}/episodes`
+      `/anime/${id}/episodes?page=${page}`
     );
     return response;
   },

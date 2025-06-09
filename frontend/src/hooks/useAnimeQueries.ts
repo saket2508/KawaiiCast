@@ -8,7 +8,8 @@ export const animeQueryKeys = {
   trending: () => [...animeQueryKeys.all, "trending"] as const,
   popular: () => [...animeQueryKeys.all, "popular"] as const,
   details: (id: number) => [...animeQueryKeys.all, "details", id] as const,
-  episodes: (id: number) => [...animeQueryKeys.all, "episodes", id] as const,
+  episodes: (id: number, page: number) =>
+    [...animeQueryKeys.all, "episodes", id, { page }] as const,
 };
 
 // Search anime hook with debouncing handled by caller
@@ -80,11 +81,12 @@ export const useAnimeDetails = (
 // Anime episodes hook
 export const useAnimeEpisodes = (
   id: number,
+  page: number = 1,
   options?: { enabled?: boolean }
 ) => {
   return useQuery({
-    queryKey: animeQueryKeys.episodes(id),
-    queryFn: () => animeApi.getEpisodes(id),
+    queryKey: animeQueryKeys.episodes(id, page),
+    queryFn: () => animeApi.getEpisodes(id, page),
     enabled: (options?.enabled ?? true) && id > 0,
     staleTime: 10 * 60 * 1000, // 10 minutes (episodes can get new torrents)
     gcTime: 20 * 60 * 1000, // Keep in cache for 20 minutes

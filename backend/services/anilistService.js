@@ -1,7 +1,6 @@
 import fetch from "node-fetch";
 
 const ANILIST_API_URL = "https://graphql.anilist.co";
-const JIKAN_API_URL = "https://api.jikan.moe/v4/anime";
 
 // GraphQL queries
 const SEARCH_ANIME_QUERY = `
@@ -14,6 +13,7 @@ const SEARCH_ANIME_QUERY = `
       }
       media(search: $search, type: ANIME) {
         id
+        idMal
         title {
           romaji
           english
@@ -47,6 +47,7 @@ const GET_ANIME_DETAILS_QUERY = `
   query ($id: Int) {
     Media(id: $id, type: ANIME) {
       id
+      idMal
       title {
         romaji
         english
@@ -111,6 +112,7 @@ const TRENDING_ANIME_QUERY = `
     Page(page: $page, perPage: $perPage) {
       media(type: ANIME, sort: TRENDING_DESC, status: RELEASING) {
         id
+        idMal
         title {
           romaji
           english
@@ -201,6 +203,7 @@ const formatAnimeData = (anime, includeExtended = false) => {
   const formatted = {
     id: anime.id,
     anilistId: anime.id,
+    malId: anime.idMal,
     title: anime.title.english || anime.title.romaji || anime.title.native,
     titleEnglish: anime.title.english,
     titleRomaji: anime.title.romaji,

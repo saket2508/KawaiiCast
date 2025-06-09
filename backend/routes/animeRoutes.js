@@ -21,6 +21,15 @@ router.get("/anime/:id/torrents", animeController.getAnimeTorrents);
 // Get episodes for an anime (with torrent data)
 router.get("/anime/:id/episodes", animeController.getAnimeEpisodes);
 
+// Get specific episode details
+router.get(
+  "/anime/:id/episodes/:episodeNumber",
+  animeController.getEpisodeDetails
+);
+
+// Get anime with all detailed episodes (convenience endpoint)
+router.get("/anime/:id/complete", animeController.getAnimeWithAllEpisodes);
+
 // Search general torrents (fallback)
 router.get("/torrents/search", animeController.searchTorrents);
 

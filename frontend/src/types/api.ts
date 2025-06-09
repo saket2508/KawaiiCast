@@ -56,7 +56,9 @@ export interface Episode {
   number: number;
   episodeNumber?: number;
   title: string;
-  airDate?: string;
+  aired?: string;
+  filler?: boolean;
+  recap?: boolean;
   watched?: boolean;
   watchedAt?: string;
   torrents: EpisodeTorrent[];
