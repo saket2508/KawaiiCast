@@ -321,10 +321,41 @@ export const removeTorrent = (req, res) => {
 
 // Helper functions
 const addTorrentToClient = async (client, torrentInput, torrentId) => {
-  // Check if we already have this torrent
+  // Check if we already have this torrent in our Map
   let torrent = activeTorrents.get(torrentId);
 
   if (!torrent) {
+    // Also check the WebTorrent client's internal torrents
+    // In case of magnet links, we need to extract the info hash to match
+    let infoHash;
+    if (
+      typeof torrentInput === "string" &&
+      torrentInput.startsWith("magnet:")
+    ) {
+      const magnetMatch = torrentInput.match(/xt=urn:btih:([a-fA-F0-9]{40})/);
+      if (magnetMatch) {
+        infoHash = magnetMatch[1].toLowerCase();
+      }
+    }
+
+    // Check if torrent already exists in the client
+    const existingTorrent = client.torrents.find((t) => {
+      if (infoHash) {
+        return t.infoHash.toLowerCase() === infoHash;
+      }
+      // For buffer inputs, we'll need to let it try and catch the duplicate error
+      return false;
+    });
+
+    if (existingTorrent) {
+      console.log(
+        "Found existing torrent in client, reusing:",
+        existingTorrent.name
+      );
+      activeTorrents.set(torrentId, existingTorrent);
+      return existingTorrent;
+    }
+
     console.log(
       "Adding torrent:",
       typeof torrentInput === "string"
@@ -335,25 +366,50 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
     torrent = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error("Timeout: Could not fetch torrent metadata"));
-      }, 60000);
+      }, 120000);
 
-      const newTorrent = client.add(torrentInput, {
-        destroyStoreOnDestroy: true,
-        storeCacheSlots: 20,
-      });
+      try {
+        const newTorrent = client.add(torrentInput, {
+          destroyStoreOnDestroy: true,
+          storeCacheSlots: 20,
+        });
 
-      newTorrent.on("ready", () => {
+        newTorrent.on("ready", () => {
+          clearTimeout(timeoutId);
+          console.log("Torrent ready:", newTorrent.name);
+          activeTorrents.set(torrentId, newTorrent);
+          resolve(newTorrent);
+        });
+
+        newTorrent.on("error", (err) => {
+          clearTimeout(timeoutId);
+          console.error("Torrent error:", err);
+
+          // If it's a duplicate error, try to find the existing torrent
+          if (err.message && err.message.includes("duplicate torrent")) {
+            const hash = err.message.match(/([a-fA-F0-9]{40})/)?.[1];
+            if (hash) {
+              const existingTorrent = client.torrents.find(
+                (t) => t.infoHash.toLowerCase() === hash.toLowerCase()
+              );
+              if (existingTorrent) {
+                console.log(
+                  "Found duplicate torrent, reusing:",
+                  existingTorrent.name
+                );
+                activeTorrents.set(torrentId, existingTorrent);
+                resolve(existingTorrent);
+                return;
+              }
+            }
+          }
+
+          reject(err);
+        });
+      } catch (syncError) {
         clearTimeout(timeoutId);
-        console.log("Torrent ready:", newTorrent.name);
-        activeTorrents.set(torrentId, newTorrent);
-        resolve(newTorrent);
-      });
-
-      newTorrent.on("error", (err) => {
-        clearTimeout(timeoutId);
-        console.error("Torrent error:", err);
-        reject(err);
-      });
+        reject(syncError);
+      }
     });
   }
 

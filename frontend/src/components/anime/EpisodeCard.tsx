@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 
 export interface EpisodeCardProps {
   episode: Episode;
-  onWatch: (magnet: string) => void;
+  onWatch: (magnet: string, episodeNumber: number) => void;
   onSearchTorrents?: (episodeNumber: number) => void;
   className?: string;
 }
@@ -89,7 +89,7 @@ export const EpisodeCard: React.FC<EpisodeCardProps> = ({
 
     if (episode.torrents.length === 1) {
       // Only one torrent, watch directly
-      onWatch(episode.torrents[0].magnet);
+      onWatch(episode.torrents[0].magnet, episode.number);
     } else {
       // Multiple torrents, show quality selector
       setShowQualitySelector(true);
@@ -98,7 +98,7 @@ export const EpisodeCard: React.FC<EpisodeCardProps> = ({
 
   const handleQualitySelect = (torrent: EpisodeTorrent) => {
     setShowQualitySelector(false);
-    onWatch(torrent.magnet);
+    onWatch(torrent.magnet, episode.number);
   };
 
   const getBestQuality = () => {

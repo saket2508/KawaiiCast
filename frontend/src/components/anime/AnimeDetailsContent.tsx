@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useAnimeDetails } from "@/hooks/useAnimeQueries";
 import { formatScore, getStatusColor } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -88,8 +89,17 @@ type TabType = "overview" | "episodes";
 export const AnimeDetailsContent: React.FC<AnimeDetailsContentProps> = ({
   animeId,
 }) => {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>("overview");
   const { data: anime, isLoading, error, refetch } = useAnimeDetails(animeId);
+
+  // Handle tab from URL parameter
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "episodes") {
+      setActiveTab("episodes");
+    }
+  }, [searchParams]);
 
   // Loading state
   if (isLoading) {
@@ -214,7 +224,14 @@ export const AnimeDetailsContent: React.FC<AnimeDetailsContentProps> = ({
                 variant="primary"
                 size="lg"
                 className="w-full group relative overflow-hidden bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 transition-all duration-300 transform hover:scale-[1.02] shadow-lg hover:shadow-xl"
-                onClick={() => setActiveTab("episodes")}
+                onClick={() => {
+                  // Navigate to first episode if available, otherwise show episodes tab
+                  if (anime.episodes && anime.episodes > 0) {
+                    window.location.href = `/anime/${animeId}/watch/1`;
+                  } else {
+                    setActiveTab("episodes");
+                  }
+                }}
               >
                 <div className="flex items-center justify-center gap-3">
                   <svg
@@ -404,9 +421,7 @@ export const AnimeDetailsContent: React.FC<AnimeDetailsContentProps> = ({
                 </div>
               )}
 
-              {activeTab === "episodes" && (
-                <EpisodeList animeId={animeId} animeTitle={displayTitle} />
-              )}
+              {activeTab === "episodes" && <EpisodeList animeId={animeId} />}
             </div>
           </div>
         </div>

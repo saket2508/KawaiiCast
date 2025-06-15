@@ -23,7 +23,7 @@ CREATE TABLE anime (
 -- Episode tracking
 CREATE TABLE anime_episodes (
     id SERIAL PRIMARY KEY,
-    anime_id INTEGER REFERENCES anime(id),
+    anime_id INTEGER REFERENCES anime(anilist_id),
     episode_number INTEGER NOT NULL,
     title VARCHAR(500),
     title_japanese VARCHAR(500),
@@ -42,7 +42,7 @@ CREATE TABLE anime_episodes (
 -- Cached torrent results
 CREATE TABLE episode_torrents (
     id SERIAL PRIMARY KEY,
-    anime_id INTEGER REFERENCES anime(id),
+    anime_id INTEGER REFERENCES anime(anilist_id),
     episode_number INTEGER,
     title VARCHAR(500),
     magnet_uri TEXT NOT NULL,
@@ -58,7 +58,7 @@ CREATE TABLE episode_torrents (
 CREATE TABLE watch_history (
     id SERIAL PRIMARY KEY,
     session_id VARCHAR(255),
-    anime_id INTEGER REFERENCES anime(id),
+    anime_id INTEGER REFERENCES anime(anilist_id),
     episode_number INTEGER,
     watched_at TIMESTAMP DEFAULT NOW()
 );

@@ -7,6 +7,7 @@ import { formatBytes } from "../utils/helpers.js";
 // Search anime
 export const searchAnime = async (req, res) => {
   try {
+    console.log("🔍 searchAnime service called", req.query);
     const { query: searchQuery, page = 1, limit = 20 } = req.query;
 
     if (!searchQuery) {
@@ -39,6 +40,7 @@ export const searchAnime = async (req, res) => {
 // Get trending anime
 export const getTrendingAnime = async (req, res) => {
   try {
+    console.log("🔍 getTrendingAnime service called", req.query);
     const { page = 1, limit = 20 } = req.query;
 
     console.log(`📈 Fetching trending anime (page ${page})`);
@@ -65,6 +67,7 @@ export const getTrendingAnime = async (req, res) => {
 // Get popular anime
 export const getPopularAnime = async (req, res) => {
   try {
+    console.log("🔍 getPopularAnime service called", req.query);
     const { page = 1, limit = 20 } = req.query;
 
     console.log(`⭐ Fetching popular anime (page ${page})`);
@@ -91,6 +94,7 @@ export const getPopularAnime = async (req, res) => {
 // Get anime details
 export const getAnimeDetails = async (req, res) => {
   try {
+    console.log("🔍 getAnimeDetails service called", req.params);
     const { id } = req.params;
     const animeId = parseInt(id);
 
@@ -102,18 +106,22 @@ export const getAnimeDetails = async (req, res) => {
 
     // Get from AniList
     const animeDetails = await anilistService.getAnimeDetails(animeId);
+    console.log("getAnimeDetails results", animeDetails);
+
     // Cache in database
+    // TODO: store titleRomaji in the db
     try {
       await query(
         `
         INSERT INTO anime (
-          anilist_id, mal_id, title, title_english, description, cover_image, 
+          anilist_id, mal_id, title, title_english, title_romaji, description, cover_image, 
           banner_image, episodes, status, year, genres, score
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (anilist_id) DO UPDATE SET
           mal_id = EXCLUDED.mal_id,
           title = EXCLUDED.title,
           title_english = EXCLUDED.title_english,
+          title_romaji = EXCLUDED.title_romaji,
           description = EXCLUDED.description,
           cover_image = EXCLUDED.cover_image,
           banner_image = EXCLUDED.banner_image,
@@ -129,6 +137,7 @@ export const getAnimeDetails = async (req, res) => {
           animeDetails.malId,
           animeDetails.title,
           animeDetails.titleEnglish,
+          animeDetails.titleRomaji,
           animeDetails.description,
           animeDetails.coverImage,
           animeDetails.bannerImage,
@@ -159,6 +168,7 @@ export const getAnimeDetails = async (req, res) => {
 // Search torrents for anime
 export const getAnimeTorrents = async (req, res) => {
   try {
+    console.log("🔍 getAnimeTorrents service called");
     const { id } = req.params;
     const { episode, quality, limit = 50 } = req.query;
     const animeId = parseInt(id);
@@ -177,14 +187,23 @@ export const getAnimeTorrents = async (req, res) => {
       return res.status(404).json({ error: "Anime not found" });
     }
 
+    console.log("fetched anime", anime);
+
     const animeTitle = anime.titleEnglish || anime.title;
+    const romajiTitle = anime.titleRomaji || null;
     const episodeNumber = episode ? parseInt(episode) : null;
 
     // Search torrents
     const torrents = await torrentService.searchAnimeTorrents(
       animeTitle,
-      episodeNumber
+      episodeNumber,
+      null,
+      null,
+      "all",
+      romajiTitle ? [romajiTitle] : []
     );
+
+    // console.log("🔍 Found torrents", torrents);
 
     // Filter by quality if specified
     let filteredTorrents = torrents;
@@ -194,7 +213,12 @@ export const getAnimeTorrents = async (req, res) => {
       );
     }
 
+    console.log("torrent list below");
+    console.log(filteredTorrents.map((torrent) => torrent.title));
+
     // Get best torrents
+
+    // TODO: If episode match not found, save and return all torrents
     const bestTorrents = torrentService.getBestTorrents(
       filteredTorrents,
       episodeNumber
@@ -228,6 +252,7 @@ export const getAnimeTorrents = async (req, res) => {
 // Get episodes for an anime with detailed metadata from JIKAN API
 export const getAnimeEpisodes = async (req, res) => {
   try {
+    console.log("🔍 getAnimeEpisodes service called", req.params);
     const { id } = req.params;
     const { page = 1 } = req.query;
     const animeId = parseInt(id);
@@ -334,6 +359,7 @@ export const getAnimeEpisodes = async (req, res) => {
 // Get specific episode details
 export const getEpisodeDetails = async (req, res) => {
   try {
+    console.log("🔍 getEpisodeDetails service called", req.params);
     const { id, episodeNumber } = req.params;
     const animeId = parseInt(id);
     const epNumber = parseInt(episodeNumber);
@@ -413,6 +439,7 @@ export const getEpisodeDetails = async (req, res) => {
 // Get anime with all detailed episodes (convenience endpoint)
 export const getAnimeWithAllEpisodes = async (req, res) => {
   try {
+    console.log("🔍 getAnimeWithAllEpisodes service called", req.params);
     const { id } = req.params;
     const animeId = parseInt(id);
 
@@ -500,6 +527,7 @@ export const getAnimeWithAllEpisodes = async (req, res) => {
 // Search general torrents
 export const searchTorrents = async (req, res) => {
   try {
+    console.log("🔍 searchTorrents service called", req.query);
     const { query: searchQuery, episode, limit = 20 } = req.query;
 
     if (!searchQuery) {
@@ -535,6 +563,7 @@ export const searchTorrents = async (req, res) => {
 // Helper functions
 const getAnimeFromCacheOrApi = async (animeId) => {
   try {
+    console.log("🔍 getAnimeFromCacheOrApi service called", animeId);
     // Try database first
     const dbResult = await query("SELECT * FROM anime WHERE anilist_id = $1", [
       animeId,
@@ -549,6 +578,7 @@ const getAnimeFromCacheOrApi = async (animeId) => {
         malId: anime.mal_id,
         title: anime.title,
         titleEnglish: anime.title_english,
+        titleRomaji: anime.title_romaji,
         description: anime.description,
         coverImage: anime.cover_image,
         bannerImage: anime.banner_image,
@@ -570,6 +600,11 @@ const getAnimeFromCacheOrApi = async (animeId) => {
 
 const getCachedTorrentsForEpisode = async (animeId, episodeNumber) => {
   try {
+    console.log(
+      "🔍 getCachedTorrentsForEpisode service called",
+      animeId,
+      episodeNumber
+    );
     const torrentResult = await query(
       `
       SELECT * FROM episode_torrents 
@@ -600,6 +635,7 @@ const getCachedTorrentsForEpisode = async (animeId, episodeNumber) => {
 };
 
 const cacheTorrentsInDatabase = async (animeId, torrents) => {
+  console.log("🔍 cacheTorrentsInDatabase service called", animeId, torrents);
   for (const torrent of torrents) {
     try {
       await query(
@@ -630,6 +666,7 @@ const cacheTorrentsInDatabase = async (animeId, torrents) => {
 };
 
 const cacheEpisodeInDatabase = async (animeId, episode) => {
+  console.log("🔍 cacheEpisodeInDatabase service called", animeId, episode);
   try {
     await query(
       `
@@ -670,6 +707,11 @@ const cacheEpisodeInDatabase = async (animeId, episode) => {
 
 const getCachedEpisodeFromDatabase = async (animeId, episodeNumber) => {
   try {
+    console.log(
+      "🔍 getCachedEpisodeFromDatabase service called",
+      animeId,
+      episodeNumber
+    );
     const result = await query(
       `
       SELECT * FROM anime_episodes 

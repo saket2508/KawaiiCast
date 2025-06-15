@@ -1,4 +1,4 @@
-import { Anime, Episode } from "@/types/api";
+import { Anime, Episode, EpisodeTorrent } from "@/types/api";
 
 // Get API base URL from environment variable or fallback to relative path
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
@@ -49,6 +49,18 @@ interface AnimeEpisodesResponse {
     };
   };
   page?: number;
+}
+
+// API Response type for anime torrents endpoint
+interface AnimeTorrentsResponse {
+  success: boolean;
+  anime: {
+    id: number;
+    title: string;
+  };
+  episode?: number;
+  torrents: EpisodeTorrent[];
+  total: number;
 }
 
 // Generic API error handling
@@ -142,6 +154,34 @@ export const animeApi = {
     const response = await apiRequest<AnimeEpisodesResponse>(
       `/anime/${id}/episodes?page=${page}`
     );
+    return response;
+  },
+
+  // Get torrents for anime
+  getTorrents: async (
+    id: number,
+    episode?: number,
+    quality?: string
+  ): Promise<AnimeTorrentsResponse> => {
+    if (!id || id <= 0) {
+      throw new ApiError("Invalid anime ID", 400);
+    }
+
+    let url = `/anime/${id}/torrents`;
+    const params = new URLSearchParams();
+
+    if (episode) {
+      params.append("episode", episode.toString());
+    }
+    if (quality) {
+      params.append("quality", quality);
+    }
+
+    if (params.toString()) {
+      url += `?${params.toString()}`;
+    }
+
+    const response = await apiRequest<AnimeTorrentsResponse>(url);
     return response;
   },
 };

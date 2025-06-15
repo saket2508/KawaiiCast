@@ -3,20 +3,14 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAnimeEpisodes } from "@/hooks/useAnimeQueries";
+import { useWatchProgress, WatchProgress } from "@/hooks/useWatchProgress";
 import { Button } from "@/components/ui/Button";
 import { Tag } from "@/components/ui/Tag";
-import {
-  Download,
-  Play,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Play, ChevronLeft, ChevronRight, CheckCircle } from "lucide-react";
 import { Episode } from "@/types/api";
 
 export interface EpisodeListProps {
   animeId: number;
-  animeTitle: string;
 }
 
 // Loading skeleton for episode list items
@@ -41,55 +35,115 @@ const EpisodeListItemSkeleton: React.FC = () => (
 // Episode List Item Component
 const EpisodeListItem: React.FC<{
   episode: Episode;
-  onWatch: (magnet: string) => void;
-  onSearchTorrents: (episodeNumber: number) => void;
-}> = ({ episode, onWatch, onSearchTorrents }) => {
+  watchProgress?: WatchProgress;
+  onWatch: (episodeNumber: number) => void;
+}> = ({ episode, watchProgress, onWatch }) => {
   const bestTorrent = episode.torrents?.[0];
+  const hasAvailableTorrents = episode.hasTorrents && bestTorrent;
+  const isWatched = watchProgress?.completed || false;
+  const hasProgress = watchProgress && watchProgress.currentTime > 30;
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors hover:bg-gray-700/50">
+    <div className="bg-gray-800 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors hover:bg-gray-700/50 group">
       <div className="flex-1">
-        <h3 className="text-md font-semibold text-white truncate">
-          {episode.number}. {episode.title}
-        </h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-md font-semibold text-white truncate">
+            {episode.number}. {episode.title}
+          </h3>
+
+          {/* Watch status indicator */}
+          {isWatched && (
+            <div className="flex items-center gap-1">
+              <CheckCircle size={16} className="text-green-400" />
+              <span className="text-xs text-green-400">Watched</span>
+            </div>
+          )}
+
+          {/* Progress indicator for partially watched episodes */}
+          {hasProgress && !isWatched && (
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-orange-400" />
+              <span className="text-xs text-orange-400">
+                {Math.round(watchProgress.progress)}% watched
+              </span>
+            </div>
+          )}
+
+          {/* Availability indicator */}
+          {!isWatched && !hasProgress && (
+            <div className="flex items-center gap-1">
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  hasAvailableTorrents ? "bg-green-400" : "bg-gray-500"
+                }`}
+              />
+              <span
+                className={`text-xs ${
+                  hasAvailableTorrents ? "text-green-400" : "text-gray-500"
+                }`}
+              >
+                {hasAvailableTorrents ? "Available" : "No torrents"}
+              </span>
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center space-x-2 text-xs text-gray-400 mt-1">
           {episode.aired && (
             <span>Aired: {new Date(episode.aired).toLocaleDateString()}</span>
           )}
           {episode.filler && <Tag color="yellow">Filler</Tag>}
           {episode.recap && <Tag color="blue">Recap</Tag>}
+          {/* Show quality info if available */}
+          {bestTorrent && (
+            <>
+              <span>•</span>
+              <span className="text-orange-400">{bestTorrent.quality}</span>
+              <span>•</span>
+              <span>{bestTorrent.releaseGroup}</span>
+              <span>•</span>
+              <span>{bestTorrent.seeders} seeders</span>
+            </>
+          )}
+          {/* Show last watched time */}
+          {watchProgress?.lastWatched && (
+            <>
+              <span>•</span>
+              <span>
+                Last watched {watchProgress.lastWatched.toLocaleDateString()}
+              </span>
+            </>
+          )}
         </div>
       </div>
+
       <div className="flex items-center space-x-2 flex-shrink-0">
-        {bestTorrent ? (
-          <>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => onWatch(bestTorrent.magnet)}
-              leftIcon={<Play size={16} />}
-            >
-              Watch
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onSearchTorrents(episode.number)}
-              leftIcon={<Download size={16} />}
-            >
-              Torrents
-            </Button>
-          </>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSearchTorrents(episode.number)}
-            leftIcon={<Search size={16} />}
-          >
-            Find Torrents
-          </Button>
+        {/* Progress bar for partially watched episodes */}
+        {hasProgress && !isWatched && (
+          <div className="w-20 h-1 bg-gray-600 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-orange-400 transition-all duration-300"
+              style={{ width: `${watchProgress.progress}%` }}
+            />
+          </div>
         )}
+
+        {/* Watch button with dynamic text */}
+        <Button
+          variant={hasAvailableTorrents ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => onWatch(episode.number)}
+          leftIcon={isWatched ? <CheckCircle size={16} /> : <Play size={16} />}
+          className={
+            isWatched
+              ? "bg-green-600 hover:bg-green-700 text-white"
+              : hasAvailableTorrents
+              ? "bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+              : "border-orange-500 text-orange-400 hover:bg-orange-500/10"
+          }
+        >
+          {isWatched ? "Rewatch" : hasProgress ? "Continue" : "Watch"}
+        </Button>
       </div>
     </div>
   );
@@ -119,12 +173,12 @@ const ErrorState: React.FC<{ error: Error; onRetry?: () => void }> = ({
   </div>
 );
 
-export const EpisodeList: React.FC<EpisodeListProps> = ({
-  animeId,
-  animeTitle,
-}) => {
+export const EpisodeList: React.FC<EpisodeListProps> = ({ animeId }) => {
   const router = useRouter();
   const [page, setPage] = useState(1);
+
+  // Get watch progress for this anime
+  const { getEpisodeProgress } = useWatchProgress(animeId, 1); // Using 1 as dummy episode for anime-wide progress access
 
   const {
     data: episodeData,
@@ -133,14 +187,9 @@ export const EpisodeList: React.FC<EpisodeListProps> = ({
     refetch,
   } = useAnimeEpisodes(animeId, page);
 
-  const handleWatch = (magnet: string) => {
-    const encodedMagnet = encodeURIComponent(magnet);
-    router.push(`/watch/${encodedMagnet}`);
-  };
-
-  const handleSearchTorrents = (episodeNumber: number) => {
-    const searchQuery = `${animeTitle} episode ${episodeNumber}`;
-    router.push(`/search?q=${encodeURIComponent(searchQuery)}`);
+  const handleWatch = (episodeNumber: number) => {
+    // Navigate to contextual watch page
+    router.push(`/anime/${animeId}/watch/${episodeNumber}`);
   };
 
   const handlePrevPage = () => {
@@ -225,8 +274,8 @@ export const EpisodeList: React.FC<EpisodeListProps> = ({
           <EpisodeListItem
             key={episode.number}
             episode={episode}
+            watchProgress={getEpisodeProgress(episode.number)}
             onWatch={handleWatch}
-            onSearchTorrents={handleSearchTorrents}
           />
         ))}
       </div>

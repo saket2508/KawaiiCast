@@ -7,12 +7,12 @@ interface TagProps {
 }
 
 const colorClasses = {
-  gray: "bg-gray-200 text-gray-800",
-  blue: "bg-blue-100 text-blue-800",
-  green: "bg-green-100 text-green-800",
-  yellow: "bg-yellow-100 text-yellow-800",
-  red: "bg-red-100 text-red-800",
-  purple: "bg-purple-100 text-purple-800",
+  gray: "bg-gray-700 text-gray-300",
+  blue: "bg-blue-600/20 text-blue-400",
+  green: "bg-green-600/20 text-green-400",
+  yellow: "bg-yellow-600/20 text-yellow-400",
+  red: "bg-red-600/20 text-red-400",
+  purple: "bg-purple-600/20 text-purple-400",
 };
 
 export const Tag: React.FC<TagProps> = ({

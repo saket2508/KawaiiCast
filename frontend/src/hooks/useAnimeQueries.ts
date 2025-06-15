@@ -10,6 +10,8 @@ export const animeQueryKeys = {
   details: (id: number) => [...animeQueryKeys.all, "details", id] as const,
   episodes: (id: number, page: number) =>
     [...animeQueryKeys.all, "episodes", id, { page }] as const,
+  torrents: (id: number, episode?: number, quality?: string) =>
+    [...animeQueryKeys.all, "torrents", id, { episode, quality }] as const,
 };
 
 // Search anime hook with debouncing handled by caller
@@ -90,6 +92,29 @@ export const useAnimeEpisodes = (
     enabled: (options?.enabled ?? true) && id > 0,
     staleTime: 10 * 60 * 1000, // 10 minutes (episodes can get new torrents)
     gcTime: 20 * 60 * 1000, // Keep in cache for 20 minutes
+    retry: (failureCount, error: ApiError) => {
+      // Don't retry on 4xx errors, only on 5xx and network errors
+      if (error?.status >= 400 && error?.status < 500) {
+        return false;
+      }
+      return failureCount < 2;
+    },
+  });
+};
+
+// Anime torrents hook
+export const useAnimeTorrents = (
+  id: number,
+  episode?: number,
+  quality?: string,
+  options?: { enabled?: boolean }
+) => {
+  return useQuery({
+    queryKey: animeQueryKeys.torrents(id, episode, quality),
+    queryFn: () => animeApi.getTorrents(id, episode, quality),
+    enabled: (options?.enabled ?? true) && id > 0,
+    staleTime: 5 * 60 * 1000, // 5 minutes (torrents change frequently)
+    gcTime: 15 * 60 * 1000, // Keep in cache for 15 minutes
     retry: (failureCount, error: ApiError) => {
       // Don't retry on 4xx errors, only on 5xx and network errors
       if (error?.status >= 400 && error?.status < 500) {
