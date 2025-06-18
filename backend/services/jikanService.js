@@ -10,7 +10,7 @@ const makeJikanRequest = async (endpoint) => {
 
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "AnimeStreamer/1.0",
+        "User-Agent": "KawaiiCaster/1.0",
       },
     });
 

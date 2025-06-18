@@ -8,6 +8,7 @@ CREATE TABLE anime (
     mal_id INTEGER,
     title VARCHAR(500) NOT NULL,
     title_english VARCHAR(500),
+    title_romaji VARCHAR(500),
     description TEXT,
     cover_image VARCHAR(500),
     banner_image VARCHAR(500),

@@ -39,9 +39,7 @@ const Home = () => {
                 <div className="absolute -inset-1 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl blur opacity-30"></div>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gradient">
-                  AnimeStream
-                </h1>
+                <h1 className="text-2xl font-bold text-gradient">KawaiiCast</h1>
                 <div className="text-xs text-gray-300 -mt-1">
                   Premium Experience
                 </div>

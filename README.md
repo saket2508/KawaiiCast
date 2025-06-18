@@ -1,6 +1,6 @@
-# Torrent Streamer
+# KawaiiCast
 
-This project allows you to stream torrents directly in your browser.
+KawaiiCast is a self-hosted, lightweight alternative to Crunchyroll/HiAnime that lets you stream your favorite anime straight from torrent magnet links—no downloads or waiting, just press play.
 
 ## Prerequisites
 
@@ -57,3 +57,20 @@ The frontend development server will start on `http://localhost:3000`.
 ### 5. Open the application
 
 You can now open your browser and navigate to `http://localhost:3000` to use the application.
+
+## 📝 TODO
+
+### Backend
+
+- Organise and clean up controllers/modules code. It can be more readable.
+- Fetch season/arc details for specific anime episode.
+- Refine torrent search logic. Use multiple sources and include season/arc name in the queries.
+- Figure out deployment for personal use.
+
+### Frontend
+
+- Organise and clean up hooks for fetching anime titles and media playback
+- Handle torrent server-side errors with retry logic while fetching magnets & streaming playable files
+- Video playback controls UX: show video length, allow user to skip
+- Fix `useWatchProgress` hook for saving progress to localstorage.
+- Add new routes for trending and library

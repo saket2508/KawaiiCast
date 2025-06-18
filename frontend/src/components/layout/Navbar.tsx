@@ -42,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
               <div className="hidden sm:block">
                 <span className="text-xl font-bold text-gradient">
-                  AnimeStream
+                  KawaiiCast
                 </span>
                 <div className="text-xs text-gray-400 -mt-1">
                   Premium Experience

@@ -1,4 +1,4 @@
-# WebTorrent Streaming Backend (Node.js)
+# KawaiiCast Backend (Node.js)
 
 A high-performance Node.js backend for torrent streaming using WebTorrent directly.
 
@@ -119,10 +119,3 @@ npm run dev
 # Check health
 curl http://localhost:8080/health
 ```
-
-## 📝 TODO
-
-- Organise and clean up controllers/modules code. It can be more readable.
-- Fetch season/arc details for specific anime episode.
-- Refine torrent search logic. Use multiple sources and include season/arc name in the queries.
-- Figure out deployment for personal use.
