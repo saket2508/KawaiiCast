@@ -15,7 +15,7 @@ Follow these instructions to get the application up and running locally.
 
 ```bash
 git clone <repository-url>
-cd torrent-streamer
+cd KawaiiCast
 ```
 
 ### 2. Start the Database
