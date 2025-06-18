@@ -1,16 +1,6 @@
-# WebTorrent Streaming Backend (Node.js)
+# KawaiiCast Backend (Node.js)
 
 A high-performance Node.js backend for torrent streaming using WebTorrent directly.
-
-## 🚀 Why Node.js + WebTorrent?
-
-This backend provides **superior performance** compared to the Python subprocess approach:
-
-✅ **Direct WebTorrent Integration**: No subprocess overhead  
-✅ **Native Streaming**: Direct file stream access  
-✅ **Better Control**: Full access to torrent events and management  
-✅ **Range Requests**: Proper HTTP range support for video seeking  
-✅ **Memory Efficient**: Optimal resource usage and cleanup
 
 ## 📦 Installation
 
@@ -81,18 +71,14 @@ List all active streams
 ```bash
 PORT=8080                    # Server port (default: 8080)
 NODE_ENV=production         # Environment mode
+
+DB_HOST=localhost # Database
+DB_PORT=5432
+DB_NAME=your_db_name
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+
 ```
-
-## 📊 Performance Benefits
-
-| Aspect         | Python + CLI | Node.js + WebTorrent |
-| -------------- | ------------ | -------------------- |
-| Startup Time   | ~2-3s        | ~200ms               |
-| Memory Usage   | Higher       | Lower                |
-| Stream Latency | ~500ms       | ~50ms                |
-| CPU Usage      | Higher       | Lower                |
-| Error Handling | Limited      | Comprehensive        |
-| Range Requests | Basic        | Full Support         |
 
 ## 🔍 Monitoring
 

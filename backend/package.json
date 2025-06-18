@@ -2,11 +2,11 @@
   "name": "torrent-streamer-backend",
   "version": "1.0.0",
   "description": "Node.js backend for torrent streaming using WebTorrent",
-  "main": "server.js",
+  "main": "app.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node app.js",
+    "dev": "nodemon app.js",
     "build": "echo 'No build step required'"
   },
   "dependencies": {
@@ -16,7 +16,11 @@
     "morgan": "^1.10.0",
     "multer": "^2.0.1",
     "range-parser": "^1.2.1",
-    "webtorrent": "^2.1.28"
+    "webtorrent": "^2.1.28",
+    "pg": "^8.11.3",
+    "node-fetch": "^3.3.2",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
@@ -26,7 +30,8 @@
     "streaming",
     "torrent",
     "nodejs",
-    "express"
+    "express",
+    "anime"
   ],
   "author": "",
   "license": "MIT"

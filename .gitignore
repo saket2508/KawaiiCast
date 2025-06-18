@@ -27,3 +27,7 @@ node_modules/
 # Task files
 tasks.json
 tasks/ 
+
+# Migrations
+migrations/
+apply_migrations.sh
