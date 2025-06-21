@@ -1,29 +1,63 @@
-FROM node:18-alpine
+# ---- Base for Dev (includes all deps) ----
+  FROM node:18-alpine AS base-dev
 
-# Set working directory
-WORKDIR /app
+  WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+  # 1) Add Alpine build toolchain for native addons
+  RUN apk add --no-cache \
+    build-base \
+    python3 \
+    make \
+    git
 
-# Install dependencies
-RUN npm ci --only=production && apk add --no-cache postgresql-client bash
+  COPY package*.json ./
+  
+  # install dev + prod deps
+  RUN npm install --legacy-peer-deps
+  
+  # ---- Dev Stage ----
+  FROM base-dev AS dev
+  
+  # copy your source for live-reload
+  COPY . .
+  
+  # mark dev mode
+  ENV NODE_ENV=development
+  
+  EXPOSE 8080
+  
+  # assumes you have a "dev" script (e.g. nodemon)
+  CMD ["npm", "run", "dev"]
+  
+  # ---- Prod Dependencies Stage ----
+  FROM node:18-alpine AS deps-prod
+  
+  WORKDIR /app
+  COPY package*.json ./
+  
+  # install only prod deps
+  RUN npm ci --legacy-peer-deps
 
-# Copy application code
-COPY . .
-
-# Copy custom entrypoint script and make it executable
-RUN chmod +x apply_migrations.sh
-
-# Expose port
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
-
-# Set entrypoint to run migrations then start app
-ENTRYPOINT ["./apply_migrations.sh"]
-
-# Default command starts the application
-CMD ["npm", "start"] 
+  # ---- Prod Stage ----
+  FROM node:18-alpine AS prod
+  
+  WORKDIR /app
+  
+  # bring in only prod deps
+  COPY --from=deps-prod /app/node_modules ./node_modules
+  # then application code
+  COPY . .
+  
+  # ensure migrations script is executable
+  RUN chmod +x apply_migrations.sh
+  
+  ENV NODE_ENV=production
+  
+  EXPOSE 8080
+  
+  HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:8080/health', res => process.exit(res.statusCode === 200 ? 0 : 1))"
+  
+  ENTRYPOINT ["./apply_migrations.sh"]
+  CMD ["npm", "start"]
+  

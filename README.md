@@ -18,45 +18,29 @@ git clone <repository-url>
 cd KawaiiCast
 ```
 
-### 2. Start the Database
+### 2. Start the stack
 
-The application uses a PostgreSQL database running in a Docker container.
-
-```bash
-docker-compose up -d
-```
-
-This will start the postgres database and it will be listening on port 5432.
-
-### 3. Setup and run the Backend
-
-The backend is a Node.js server.
+Spin up PostgreSQL, the Express backend and the Next.js frontend in one go using Docker Compose:
 
 ```bash
-cd backend
-npm install
-npm run dev
+docker-compose up
 ```
 
-The backend server will start on `http://localhost:3001`.
+Compose will:
 
-### 4. Setup and run the Frontend
+- Launch **PostgreSQL 14** (mapped to `localhost:5432`).
+- Build & start the **backend** server (available at `http://localhost:8080`).
+- Build & start the **frontend** (available at `http://localhost:3000`).
 
-The frontend is a Next.js application.
-
-Open a new terminal window and run the following commands:
+You can follow the combined logs with:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+docker-compose logs -f
 ```
 
-The frontend development server will start on `http://localhost:3000`.
+### 3. Open the application
 
-### 5. Open the application
-
-You can now open your browser and navigate to `http://localhost:3000` to use the application.
+Once all containers are healthy, open your browser at `http://localhost:3000` to use KawaiiCast.
 
 ## 📝 TODO
 

@@ -10,9 +10,11 @@ import {
   RotateCcw,
   Maximize,
   Minimize,
+  List,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useAutoTorrentStream } from "@/hooks/useAutoTorrentStream";
+import { FileSelector } from "@/components/FileSelector";
 import { EpisodeTorrent } from "@/types/api";
 
 export interface StreamingVideoPlayerProps {
@@ -43,6 +45,7 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [showFileSelector, setShowFileSelector] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState(false);
@@ -399,6 +402,29 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       onClick={handleContainerClick}
       onFocus={showControlsTemporarily}
     >
+      {/* File Selector Overlay */}
+      {showFileSelector && torrentStream.files.length > 0 && (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="max-w-lg w-full p-4">
+            <FileSelector
+              files={torrentStream.files}
+              selectedIndex={torrentStream.selectedFileIndex ?? -1}
+              onFileSelect={(index) => torrentStream.selectFile(index)}
+              onStartStream={() => setShowFileSelector(false)}
+              isStreaming={isPlaying}
+            />
+            <div className="flex justify-center mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setShowFileSelector(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <video
         ref={videoRef}
         className="w-full h-full"
@@ -497,6 +523,17 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
+            {/* Show File Selector button */}
+            {torrentStream.files.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowFileSelector(true)}
+                className="text-white hover:text-orange-500 hover:bg-gray-800"
+              >
+                <List size={20} />
+              </Button>
+            )}
             {hasNextEpisode && (
               <Button
                 variant="ghost"
