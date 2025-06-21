@@ -15,11 +15,14 @@ interface TorrentInfo {
   ready: boolean;
 }
 
+// Matches backend utils/helpers.prepareFileInfo output
 interface TorrentFile {
   index: number;
   name: string;
   size: number;
-  type: string;
+  path: string;
+  isVideo: boolean;
+  isAudio: boolean;
   isPlayable: boolean;
 }
 
@@ -122,7 +125,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
 
       // Generate stream URL
       const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
-        torrentInfo.torrentId
+        currentTorrentIdRef.current!
       )}&file_index=${selectedFile.index}`;
 
       setState((prev) => ({
@@ -173,10 +176,36 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     }
   };
 
+  const selectFile = (index: number) => {
+    if (!currentTorrentIdRef.current) return;
+
+    setState((prev) => {
+      if (!prev.torrentInfo) return prev;
+
+      const file = prev.torrentInfo.files.find((f) => f.index === index);
+      if (!file) return prev;
+
+      const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+        currentTorrentIdRef.current!
+      )}&file_index=${index}`;
+
+      return {
+        ...prev,
+        selectedFile: file,
+        streamUrl,
+        // isReady remains unchanged; we assume torrent readiness applies to all files once torrent is ready
+      };
+    });
+  };
+
   return {
     ...state,
     stopStream,
     retry,
+    // New helpers for UI interactions
+    files: state.torrentInfo?.files || [],
+    selectedFileIndex: state.selectedFile?.index ?? null,
+    selectFile,
     // Computed properties for convenience
     hasError: Boolean(state.error),
     isBuffering: state.isLoading || (state.torrentInfo && !state.isReady),
