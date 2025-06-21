@@ -68,6 +68,8 @@ export const postTorrentInfo = async (req, res) => {
   // Handle JSON payload
   else if (req.body) {
     const { magnet, torrentData } = req.body;
+    console.log("magnet:", magnet);
+    console.log("torrentData:", torrentData);
 
     // Validate input
     if (!magnet && !torrentData) {
