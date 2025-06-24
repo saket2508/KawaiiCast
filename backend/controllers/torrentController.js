@@ -5,6 +5,7 @@ import {
   getStreamId,
   getTorrentId,
   prepareFileInfo,
+  probeForSubs,
   sortFiles,
 } from "../utils/helpers.js";
 
@@ -41,7 +42,7 @@ export const getTorrentInfo = async (req, res) => {
   try {
     const client = req.app.locals.webTorrentClient;
     const torrent = await addTorrentToClient(client, magnet, magnet);
-    const response = buildTorrentResponse(torrent, magnet);
+    const response = await buildTorrentResponse(torrent, magnet);
 
     res.json(response);
   } catch (error) {
@@ -63,13 +64,10 @@ export const postTorrentInfo = async (req, res) => {
     torrentInput = req.file.buffer;
     torrentId = getTorrentId(torrentInput);
     isFileUpload = true;
-    console.log("Processing uploaded torrent file:", req.file.originalname);
   }
   // Handle JSON payload
   else if (req.body) {
     const { magnet, torrentData } = req.body;
-    console.log("magnet:", magnet);
-    console.log("torrentData:", torrentData);
 
     // Validate input
     if (!magnet && !torrentData) {
@@ -85,10 +83,6 @@ export const postTorrentInfo = async (req, res) => {
 
     torrentInput = magnet || Buffer.from(torrentData, "base64");
     torrentId = getTorrentId(torrentInput);
-    console.log(
-      "Processing torrent:",
-      magnet ? magnet.slice(0, 100) + "..." : "from base64 data"
-    );
   } else {
     return res.status(400).json({
       error: "Either magnet URI, torrent file data, or file upload is required",
@@ -98,7 +92,7 @@ export const postTorrentInfo = async (req, res) => {
   try {
     const client = req.app.locals.webTorrentClient;
     const torrent = await addTorrentToClient(client, torrentInput, torrentId);
-    const response = buildTorrentResponse(torrent, torrentId);
+    const response = await buildTorrentResponse(torrent, torrentId);
 
     // Add upload info if it was a file upload
     if (isFileUpload) {
@@ -119,13 +113,6 @@ export const streamTorrent = async (req, res) => {
   const { magnet, torrent_id, file_index } = req.query;
   const fileIndex = parseInt(file_index) || 0;
   const torrentIdentifier = magnet || torrent_id;
-
-  console.log(
-    `Stream request: identifier=${torrentIdentifier?.slice(
-      0,
-      50
-    )}..., file_index=${fileIndex}`
-  );
 
   if (!torrentIdentifier) {
     return res.status(400).json({
@@ -158,9 +145,6 @@ export const streamTorrent = async (req, res) => {
     }
 
     const streamId = getStreamId(torrentIdentifier, fileIndex);
-    console.log(
-      `Starting stream for: ${file.name} (${formatBytes(file.length)})`
-    );
 
     // Store stream info
     activeStreams.set(streamId, {
@@ -216,13 +200,11 @@ export const streamTorrent = async (req, res) => {
     });
 
     req.on("close", () => {
-      console.log("Client disconnected, destroying stream");
       stream.destroy();
       activeStreams.delete(streamId);
     });
 
     req.on("aborted", () => {
-      console.log("Request aborted, destroying stream");
       stream.destroy();
       activeStreams.delete(streamId);
     });
@@ -252,7 +234,6 @@ export const stopStream = (req, res) => {
 
   if (activeStreams.has(streamId)) {
     activeStreams.delete(streamId);
-    console.log(`Stream stopped: ${streamId}`);
     res.json({ message: "Stream stopped" });
   } else {
     res.json({ message: "Stream not found or already stopped" });
@@ -294,8 +275,6 @@ export const removeTorrent = (req, res) => {
   }
 
   if (torrent) {
-    console.log("Removing torrent:", torrent.name);
-
     // Stop related streams
     const streamsToStop = Array.from(activeStreams.entries())
       .filter(
@@ -350,20 +329,9 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
     });
 
     if (existingTorrent) {
-      console.log(
-        "Found existing torrent in client, reusing:",
-        existingTorrent.name
-      );
       activeTorrents.set(torrentId, existingTorrent);
       return existingTorrent;
     }
-
-    console.log(
-      "Adding torrent:",
-      typeof torrentInput === "string"
-        ? torrentInput.slice(0, 100) + "..."
-        : "from buffer"
-    );
 
     torrent = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -378,7 +346,6 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
 
         newTorrent.on("ready", () => {
           clearTimeout(timeoutId);
-          console.log("Torrent ready:", newTorrent.name);
           activeTorrents.set(torrentId, newTorrent);
           resolve(newTorrent);
         });
@@ -395,10 +362,6 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
                 (t) => t.infoHash.toLowerCase() === hash.toLowerCase()
               );
               if (existingTorrent) {
-                console.log(
-                  "Found duplicate torrent, reusing:",
-                  existingTorrent.name
-                );
                 activeTorrents.set(torrentId, existingTorrent);
                 resolve(existingTorrent);
                 return;
@@ -418,8 +381,14 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
   return torrent;
 };
 
-const buildTorrentResponse = (torrent, torrentId) => {
-  const files = prepareFileInfo(torrent.files);
+const buildTorrentResponse = async (torrent, torrentId) => {
+  const files = await Promise.all(
+    torrent.files.map(async (file, idx) => ({
+      ...prepareFileInfo([file])[0],
+      embeddedSubs: file.name.endsWith(".mkv") ? await probeForSubs(file) : [],
+    }))
+  );
+
   const sortedFiles = sortFiles(files);
 
   return {

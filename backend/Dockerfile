@@ -8,7 +8,8 @@
     build-base \
     python3 \
     make \
-    git
+    git \
+    ffmpeg
 
   COPY package*.json ./
   
@@ -47,6 +48,9 @@
   COPY --from=deps-prod /app/node_modules ./node_modules
   # then application code
   COPY . .
+  
+  # install ffprobe for subtitle extraction
+  RUN apk add --no-cache ffmpeg
   
   # ensure migrations script is executable
   RUN chmod +x apply_migrations.sh

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
   Play,
   Pause,
@@ -57,6 +57,28 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
   // Control visibility timer
   const controlsTimeoutRef = useRef<NodeJS.Timeout>(null);
+
+  // ---- new refs to keep latest callback/flag values ----
+  const onProgressUpdateRef = useRef<typeof onProgressUpdate | undefined>(
+    undefined
+  );
+  const hasNextEpisodeRef = useRef<boolean>(hasNextEpisode);
+  const onPlayNextEpisodeRef = useRef<typeof onPlayNextEpisode | undefined>(
+    undefined
+  );
+
+  // Keep refs in sync with latest props
+  useEffect(() => {
+    onProgressUpdateRef.current = onProgressUpdate;
+  }, [onProgressUpdate]);
+
+  useEffect(() => {
+    hasNextEpisodeRef.current = hasNextEpisode;
+  }, [hasNextEpisode]);
+
+  useEffect(() => {
+    onPlayNextEpisodeRef.current = onPlayNextEpisode;
+  }, [onPlayNextEpisode]);
 
   // Fullscreen change event listener
   useEffect(() => {
@@ -165,66 +187,50 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasNextEpisode, onPlayNextEpisode]);
 
-  // Set up video event listeners
-  useEffect(() => {
+  // -------- Controlled video player handlers --------
+
+  const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
+    setDuration(video.duration);
+    setVolume(video.volume);
+    // Seek to initial progress if provided
+    if (initialProgress > 0 && initialProgress < video.duration) {
+      video.currentTime = initialProgress;
+    }
+  }, [initialProgress]);
 
-    const handleLoadedMetadata = () => {
-      setDuration(video.duration);
-      setVolume(video.volume);
-      // Seek to initial progress if provided
-      if (initialProgress > 0 && initialProgress < video.duration) {
-        video.currentTime = initialProgress;
-      }
-    };
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const current = video.currentTime;
+    const total = video.duration;
+    setCurrentTime(current);
+    setDuration(total); // keep duration in sync
 
-    const handleTimeUpdate = () => {
-      const current = video.currentTime;
-      const total = video.duration;
-      setCurrentTime(current);
+    if (onProgressUpdateRef.current && total > 0) {
+      const progressPercent = (current / total) * 100;
+      onProgressUpdateRef.current(current, total, progressPercent);
+    }
 
-      // Call progress update callback
-      if (onProgressUpdate && total > 0) {
-        const progressPercent = (current / total) * 100;
-        onProgressUpdate(current, total, progressPercent);
-      }
+    if (hasNextEpisodeRef.current && total > 0 && total - current <= 30) {
+      setShowNextEpisodePrompt(true);
+    }
+  }, []);
 
-      // Show next episode prompt near the end
-      if (hasNextEpisode && total > 0 && total - current <= 30) {
-        setShowNextEpisodePrompt(true);
-      }
-    };
+  const handleVolumeChange = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    setVolume(video.volume);
+    setIsMuted(video.muted);
+  }, []);
 
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    const handleVolumeChange = () => {
-      setVolume(video.volume);
-      setIsMuted(video.muted);
-    };
-    const handleEnded = () => {
-      setIsPlaying(false);
-      if (hasNextEpisode && onPlayNextEpisode) {
-        setShowNextEpisodePrompt(true);
-      }
-    };
-
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    video.addEventListener("play", handlePlay);
-    video.addEventListener("pause", handlePause);
-    video.addEventListener("volumechange", handleVolumeChange);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("volumechange", handleVolumeChange);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, [hasNextEpisode, onPlayNextEpisode, onProgressUpdate, initialProgress]);
+  const handleEnded = useCallback(() => {
+    setIsPlaying(false);
+    if (hasNextEpisodeRef.current && onPlayNextEpisodeRef.current) {
+      setShowNextEpisodePrompt(true);
+    }
+  }, []);
 
   // Update video source when stream URL changes
   useEffect(() => {
@@ -234,18 +240,19 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     if (torrentStream.streamUrl && torrentStream.isReady) {
       video.src = torrentStream.streamUrl;
       video.load();
-    } else {
-      video.removeAttribute("src");
-      video.load();
     }
   }, [torrentStream.streamUrl, torrentStream.isReady]);
 
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
-      void torrentStream.stopStream();
+      if (torrentStream.stopStream) {
+        console.log("stopping stream");
+        void torrentStream.stopStream();
+      }
     };
-  }, [torrentStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Controls visibility management
   const showControlsTemporarily = () => {
@@ -430,6 +437,12 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
         className="w-full h-full"
         controls={false}
         preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onVolumeChange={handleVolumeChange}
+        onEnded={handleEnded}
       />
 
       {/* Next Episode Prompt */}

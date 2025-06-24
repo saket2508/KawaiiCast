@@ -1,3 +1,4 @@
+"use client";
 import { useState, useCallback } from "react";
 
 export interface WatchProgress {
@@ -24,7 +25,7 @@ const createProgressKey = (animeId: number, episodeNumber: number): string => {
 // Helper function to load watch history from localStorage
 const loadWatchHistory = (): WatchHistory => {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
       // Convert lastWatched strings back to Date objects
@@ -44,7 +45,7 @@ const loadWatchHistory = (): WatchHistory => {
 // Helper function to save watch history to localStorage
 const saveWatchHistory = (history: WatchHistory): void => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   } catch (error) {
     console.error("Failed to save watch history:", error);
   }

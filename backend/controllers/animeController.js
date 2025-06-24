@@ -7,14 +7,11 @@ import { formatBytes } from "../utils/helpers.js";
 // Search anime
 export const searchAnime = async (req, res) => {
   try {
-    console.log("🔍 searchAnime service called", req.query);
     const { query: searchQuery, page = 1, limit = 20 } = req.query;
 
     if (!searchQuery) {
       return res.status(400).json({ error: "Search query is required" });
     }
-
-    console.log(`🔍 Anime search: "${searchQuery}" (page ${page})`);
 
     const results = await anilistService.searchAnime(
       searchQuery,
@@ -40,10 +37,7 @@ export const searchAnime = async (req, res) => {
 // Get trending anime
 export const getTrendingAnime = async (req, res) => {
   try {
-    console.log("🔍 getTrendingAnime service called", req.query);
     const { page = 1, limit = 20 } = req.query;
-
-    console.log(`📈 Fetching trending anime (page ${page})`);
 
     const results = await anilistService.getTrendingAnime(
       parseInt(page),
@@ -67,10 +61,7 @@ export const getTrendingAnime = async (req, res) => {
 // Get popular anime
 export const getPopularAnime = async (req, res) => {
   try {
-    console.log("🔍 getPopularAnime service called", req.query);
     const { page = 1, limit = 20 } = req.query;
-
-    console.log(`⭐ Fetching popular anime (page ${page})`);
 
     const results = await anilistService.getPopularAnime(
       parseInt(page),
@@ -94,7 +85,6 @@ export const getPopularAnime = async (req, res) => {
 // Get anime details
 export const getAnimeDetails = async (req, res) => {
   try {
-    console.log("🔍 getAnimeDetails service called", req.params);
     const { id } = req.params;
     const animeId = parseInt(id);
 
@@ -102,11 +92,8 @@ export const getAnimeDetails = async (req, res) => {
       return res.status(400).json({ error: "Valid anime ID is required" });
     }
 
-    console.log(`📺 Fetching anime details: ${animeId}`);
-
     // Get from AniList
     const animeDetails = await anilistService.getAnimeDetails(animeId);
-    console.log("getAnimeDetails results", animeDetails);
 
     // Cache in database
     // TODO: store titleRomaji in the db
@@ -168,7 +155,6 @@ export const getAnimeDetails = async (req, res) => {
 // Search torrents for anime
 export const getAnimeTorrents = async (req, res) => {
   try {
-    console.log("🔍 getAnimeTorrents service called");
     const { id } = req.params;
     const { episode, quality, limit = 50 } = req.query;
     const animeId = parseInt(id);
@@ -177,34 +163,31 @@ export const getAnimeTorrents = async (req, res) => {
       return res.status(400).json({ error: "Valid anime ID is required" });
     }
 
-    console.log(
-      `🔍 Searching torrents for anime ${animeId}, episode ${episode || "all"}`
-    );
-
     // Get anime details
     const anime = await getAnimeFromCacheOrApi(animeId);
+
     if (!anime) {
       return res.status(404).json({ error: "Anime not found" });
     }
-
-    console.log("fetched anime", anime);
 
     const animeTitle = anime.titleEnglish || anime.title;
     const romajiTitle = anime.titleRomaji || null;
     const episodeNumber = episode ? parseInt(episode) : null;
 
+    const { aids, eids } = await torrentService.getAnimeToshoIds(
+      animeId,
+      episodeNumber
+    );
+
     // Search torrents
     const torrents = await torrentService.searchAnimeTorrents(
       animeTitle,
       episodeNumber,
-      null,
-      null,
+      aids,
+      eids,
       "all",
       romajiTitle ? [romajiTitle] : []
     );
-
-    // console.log("🔍 Found torrents", torrents);
-
     // Filter by quality if specified
     let filteredTorrents = torrents;
     if (quality) {
@@ -213,21 +196,13 @@ export const getAnimeTorrents = async (req, res) => {
       );
     }
 
-    console.log("torrent list below");
-    console.log(filteredTorrents.map((torrent) => torrent.title));
-
-    // Get best torrents
-
-    // TODO: If episode match not found, save and return all torrents
     const bestTorrents = torrentService.getBestTorrents(
       filteredTorrents,
       episodeNumber
     );
 
-    // Limit results
     const limitedTorrents = bestTorrents.slice(0, parseInt(limit));
 
-    // Cache results in database
     await cacheTorrentsInDatabase(animeId, limitedTorrents);
 
     res.json({
@@ -252,7 +227,6 @@ export const getAnimeTorrents = async (req, res) => {
 // Get episodes for an anime with detailed metadata from JIKAN API
 export const getAnimeEpisodes = async (req, res) => {
   try {
-    console.log("🔍 getAnimeEpisodes service called", req.params);
     const { id } = req.params;
     const { page = 1 } = req.query;
     const animeId = parseInt(id);
@@ -260,8 +234,6 @@ export const getAnimeEpisodes = async (req, res) => {
     if (!animeId) {
       return res.status(400).json({ error: "Valid anime ID is required" });
     }
-
-    console.log(`📋 Fetching episodes for anime ${animeId}`);
 
     // Get anime details (which now includes MAL ID)
     const anime = await getAnimeFromCacheOrApi(animeId);
@@ -277,9 +249,6 @@ export const getAnimeEpisodes = async (req, res) => {
     if (anime.malId) {
       try {
         const malId = anime.malId;
-        console.log(
-          `🔍 Fetching episode details from JIKAN for MAL ID: ${malId}`
-        );
 
         const episodeData = await jikanService.getAnimeEpisodes(
           malId,
@@ -359,7 +328,6 @@ export const getAnimeEpisodes = async (req, res) => {
 // Get specific episode details
 export const getEpisodeDetails = async (req, res) => {
   try {
-    console.log("🔍 getEpisodeDetails service called", req.params);
     const { id, episodeNumber } = req.params;
     const animeId = parseInt(id);
     const epNumber = parseInt(episodeNumber);
@@ -369,8 +337,6 @@ export const getEpisodeDetails = async (req, res) => {
         error: "Valid anime ID and episode number are required",
       });
     }
-
-    console.log(`📺 Fetching episode ${epNumber} details for anime ${animeId}`);
 
     // Get anime details to get MAL ID
     const anime = await getAnimeFromCacheOrApi(animeId);
@@ -439,15 +405,12 @@ export const getEpisodeDetails = async (req, res) => {
 // Get anime with all detailed episodes (convenience endpoint)
 export const getAnimeWithAllEpisodes = async (req, res) => {
   try {
-    console.log("🔍 getAnimeWithAllEpisodes service called", req.params);
     const { id } = req.params;
     const animeId = parseInt(id);
 
     if (!animeId) {
       return res.status(400).json({ error: "Valid anime ID is required" });
     }
-
-    console.log(`📚 Fetching complete anime data with episodes for ${animeId}`);
 
     // Get anime details
     const anime = await getAnimeFromCacheOrApi(animeId);
@@ -461,7 +424,6 @@ export const getAnimeWithAllEpisodes = async (req, res) => {
     if (anime.malId) {
       try {
         const malId = anime.malId;
-        console.log(`🔍 Fetching all episodes from JIKAN for MAL ID: ${malId}`);
 
         const episodes = await jikanService.getAllAnimeEpisodes(malId);
 
@@ -527,14 +489,11 @@ export const getAnimeWithAllEpisodes = async (req, res) => {
 // Search general torrents
 export const searchTorrents = async (req, res) => {
   try {
-    console.log("🔍 searchTorrents service called", req.query);
     const { query: searchQuery, episode, limit = 20 } = req.query;
 
     if (!searchQuery) {
       return res.status(400).json({ error: "Search query is required" });
     }
-
-    console.log(`🔍 General torrent search: "${searchQuery}"`);
 
     const episodeNumber = episode ? parseInt(episode) : null;
     const torrents = await torrentService.searchAnimeTorrents(
@@ -563,7 +522,6 @@ export const searchTorrents = async (req, res) => {
 // Helper functions
 const getAnimeFromCacheOrApi = async (animeId) => {
   try {
-    console.log("🔍 getAnimeFromCacheOrApi service called", animeId);
     // Try database first
     const dbResult = await query("SELECT * FROM anime WHERE anilist_id = $1", [
       animeId,
@@ -600,11 +558,6 @@ const getAnimeFromCacheOrApi = async (animeId) => {
 
 const getCachedTorrentsForEpisode = async (animeId, episodeNumber) => {
   try {
-    console.log(
-      "🔍 getCachedTorrentsForEpisode service called",
-      animeId,
-      episodeNumber
-    );
     const torrentResult = await query(
       `
       SELECT * FROM episode_torrents 
@@ -635,7 +588,6 @@ const getCachedTorrentsForEpisode = async (animeId, episodeNumber) => {
 };
 
 const cacheTorrentsInDatabase = async (animeId, torrents) => {
-  console.log("🔍 cacheTorrentsInDatabase service called", animeId, torrents);
   for (const torrent of torrents) {
     try {
       await query(
@@ -666,7 +618,6 @@ const cacheTorrentsInDatabase = async (animeId, torrents) => {
 };
 
 const cacheEpisodeInDatabase = async (animeId, episode) => {
-  console.log("🔍 cacheEpisodeInDatabase service called", animeId, episode);
   try {
     await query(
       `
@@ -707,11 +658,6 @@ const cacheEpisodeInDatabase = async (animeId, episode) => {
 
 const getCachedEpisodeFromDatabase = async (animeId, episodeNumber) => {
   try {
-    console.log(
-      "🔍 getCachedEpisodeFromDatabase service called",
-      animeId,
-      episodeNumber
-    );
     const result = await query(
       `
       SELECT * FROM anime_episodes 
