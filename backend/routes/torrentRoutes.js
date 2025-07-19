@@ -26,6 +26,9 @@ router.delete("/stream", torrentController.stopStream);
 // List active streams
 router.get("/streams", torrentController.listStreams);
 
+// List active torrents
+router.get("/torrents", torrentController.listTorrents);
+
 // Remove torrent
 router.delete("/torrent", torrentController.removeTorrent);
 

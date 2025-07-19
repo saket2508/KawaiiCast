@@ -46,7 +46,7 @@ process.on("SIGINT", () => {
   stopCleanupTimer();
 
   // Destroy all torrents
-  activeTorrents.forEach((torrent) => torrent.destroy());
+  activeTorrents.forEach((torrentData) => torrentData.torrent.destroy());
 
   // Destroy WebTorrent client
   client.destroy(() => {

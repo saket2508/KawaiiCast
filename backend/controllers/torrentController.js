@@ -10,12 +10,16 @@ import {
 } from "../utils/helpers.js";
 
 // Storage for active torrents and streams
-export const activeTorrents = new Map(); // torrentId -> torrent object
+export const activeTorrents = new Map(); // torrentId -> { torrent, metadata }
 export const activeStreams = new Map(); // streamId -> stream info
 
 // Stream timeout configuration
 const STREAM_TIMEOUT = process.env.NODE_ENV === 'test' ? 10 * 1000 : 30 * 60 * 1000; // 10s for testing, 30min for production
 const CLEANUP_INTERVAL = process.env.NODE_ENV === 'test' ? 5 * 1000 : 5 * 60 * 1000; // 5s for testing, 5min for production
+
+// Torrent limits configuration
+const MAX_CONCURRENT_TORRENTS = process.env.MAX_TORRENTS || 50; // Maximum concurrent torrents
+const TORRENT_INACTIVE_TIMEOUT = 60 * 60 * 1000; // Remove inactive torrents after 1 hour
 
 // Cleanup timer for abandoned streams
 let cleanupTimer = null;
@@ -52,14 +56,94 @@ const cleanupInactiveStreams = () => {
   }
 };
 
+// Function to clean up inactive torrents
+const cleanupInactiveTorrents = () => {
+  const now = Date.now();
+  const torrentsToRemove = [];
+  
+  // Check each torrent for inactivity
+  for (const [torrentId, torrentData] of activeTorrents.entries()) {
+    const timeSinceLastActivity = now - torrentData.metadata.lastAccessed;
+    
+    // Don't remove torrents that have active streams
+    const hasActiveStreams = Array.from(activeStreams.values())
+      .some(stream => stream.torrentIdentifier === torrentId);
+    
+    if (!hasActiveStreams && timeSinceLastActivity > TORRENT_INACTIVE_TIMEOUT) {
+      console.log(`Marking inactive torrent for removal: ${torrentId} (inactive for ${Math.round(timeSinceLastActivity / 1000)}s)`);
+      torrentsToRemove.push(torrentId);
+    }
+  }
+  
+  // Remove inactive torrents
+  torrentsToRemove.forEach(torrentId => {
+    const torrentData = activeTorrents.get(torrentId);
+    if (torrentData) {
+      try {
+        torrentData.torrent.destroy();
+        activeTorrents.delete(torrentId);
+      } catch (error) {
+        console.error(`Error removing inactive torrent ${torrentId}:`, error);
+      }
+    }
+  });
+  
+  if (torrentsToRemove.length > 0) {
+    console.log(`Cleaned up ${torrentsToRemove.length} inactive torrents`);
+  }
+};
+
+// Function to enforce torrent limits using LRU eviction
+const enforceTorrentLimits = () => {
+  if (activeTorrents.size <= MAX_CONCURRENT_TORRENTS) {
+    return; // Within limits
+  }
+  
+  console.log(`Torrent limit exceeded (${activeTorrents.size}/${MAX_CONCURRENT_TORRENTS}), starting LRU eviction`);
+  
+  // Sort torrents by last accessed time (LRU first)
+  const torrentEntries = Array.from(activeTorrents.entries())
+    .filter(([_, torrentData]) => {
+      // Don't evict torrents with active streams
+      const hasActiveStreams = Array.from(activeStreams.values())
+        .some(stream => stream.torrentIdentifier === torrentData.metadata.torrentId);
+      return !hasActiveStreams;
+    })
+    .sort((a, b) => a[1].metadata.lastAccessed - b[1].metadata.lastAccessed);
+  
+  // Calculate how many to remove
+  const torrentsToRemove = activeTorrents.size - MAX_CONCURRENT_TORRENTS;
+  const candidatesForRemoval = torrentEntries.slice(0, Math.min(torrentsToRemove, torrentEntries.length));
+  
+  // Remove LRU torrents
+  candidatesForRemoval.forEach(([torrentId, torrentData]) => {
+    console.log(`Evicting LRU torrent: ${torrentId}`);
+    try {
+      torrentData.torrent.destroy();
+      activeTorrents.delete(torrentId);
+    } catch (error) {
+      console.error(`Error evicting torrent ${torrentId}:`, error);
+    }
+  });
+  
+  console.log(`Evicted ${candidatesForRemoval.length} torrents to enforce limits`);
+};
+
 // Start the cleanup timer
 const startCleanupTimer = () => {
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
   }
   
-  cleanupTimer = setInterval(cleanupInactiveStreams, CLEANUP_INTERVAL);
-  console.log(`Started stream cleanup timer (${CLEANUP_INTERVAL / 1000}s interval)`);
+  // Combined cleanup function
+  const performCleanup = () => {
+    cleanupInactiveStreams();
+    cleanupInactiveTorrents();
+    enforceTorrentLimits();
+  };
+  
+  cleanupTimer = setInterval(performCleanup, CLEANUP_INTERVAL);
+  console.log(`Started cleanup timer (${CLEANUP_INTERVAL / 1000}s interval) - streams & torrents`);
 };
 
 // Stop the cleanup timer
@@ -78,6 +162,8 @@ export const getHealth = (req, res) => {
   res.json({
     status: "ok",
     activeTorrents: activeTorrents.size,
+    maxTorrents: MAX_CONCURRENT_TORRENTS,
+    torrentUtilization: `${activeTorrents.size}/${MAX_CONCURRENT_TORRENTS} (${Math.round((activeTorrents.size / MAX_CONCURRENT_TORRENTS) * 100)}%)`,
     activeStreams: activeStreams.size,
     webTorrentRatio: client.ratio,
     downloadSpeed: formatBytes(client.downloadSpeed),
@@ -85,7 +171,8 @@ export const getHealth = (req, res) => {
     cleanupTimer: {
       running: cleanupTimer !== null,
       interval: CLEANUP_INTERVAL,
-      timeout: STREAM_TIMEOUT,
+      streamTimeout: STREAM_TIMEOUT,
+      torrentTimeout: TORRENT_INACTIVE_TIMEOUT,
     },
   });
 };
@@ -188,16 +275,21 @@ export const streamTorrent = async (req, res) => {
 
   try {
     // Find torrent
-    let torrent = activeTorrents.get(torrentIdentifier);
-    if (!torrent && magnet) {
-      torrent = activeTorrents.get(magnet);
+    let torrentData = activeTorrents.get(torrentIdentifier);
+    if (!torrentData && magnet) {
+      torrentData = activeTorrents.get(magnet);
     }
 
-    if (!torrent) {
+    if (!torrentData) {
       return res.status(404).json({
         error: "Torrent not found. Please load torrent info first.",
       });
     }
+    
+    const torrent = torrentData.torrent;
+    
+    // Update last accessed time
+    torrentData.metadata.lastAccessed = Date.now();
 
     if (!torrent.ready) {
       return res.status(202).json({
@@ -360,6 +452,41 @@ export const listStreams = (_req, res) => {
   });
 };
 
+// List active torrents with metadata
+export const listTorrents = (_req, res) => {
+  const now = Date.now();
+  const torrents = Array.from(activeTorrents.entries()).map(([id, torrentData]) => ({
+    id,
+    name: torrentData.torrent.name,
+    infoHash: torrentData.torrent.infoHash,
+    size: formatBytes(torrentData.torrent.length),
+    progress: Math.round(torrentData.torrent.progress * 100),
+    downloadSpeed: formatBytes(torrentData.torrent.downloadSpeed),
+    uploadSpeed: formatBytes(torrentData.torrent.uploadSpeed),
+    numPeers: torrentData.torrent.numPeers,
+    ready: torrentData.torrent.ready,
+    metadata: {
+      ...torrentData.metadata,
+      age: now - torrentData.metadata.addedAt,
+      timeSinceLastAccess: now - torrentData.metadata.lastAccessed,
+      isInactive: (now - torrentData.metadata.lastAccessed) > TORRENT_INACTIVE_TIMEOUT,
+    },
+    hasActiveStreams: Array.from(activeStreams.values())
+      .some(stream => stream.torrentIdentifier === id),
+  }));
+
+  res.json({
+    activeTorrents: activeTorrents.size,
+    maxTorrents: MAX_CONCURRENT_TORRENTS,
+    utilization: Math.round((activeTorrents.size / MAX_CONCURRENT_TORRENTS) * 100),
+    torrents: torrents.sort((a, b) => b.metadata.lastAccessed - a.metadata.lastAccessed), // Most recent first
+    limits: {
+      maxConcurrent: MAX_CONCURRENT_TORRENTS,
+      inactiveTimeout: TORRENT_INACTIVE_TIMEOUT,
+    },
+  });
+};
+
 // Remove torrent
 export const removeTorrent = (req, res) => {
   const { magnet, torrent_id } = req.query;
@@ -372,15 +499,16 @@ export const removeTorrent = (req, res) => {
   }
 
   // Find torrent
-  let torrent = activeTorrents.get(torrentIdentifier);
+  let torrentData = activeTorrents.get(torrentIdentifier);
   let actualKey = torrentIdentifier;
 
-  if (!torrent && magnet) {
-    torrent = activeTorrents.get(magnet);
+  if (!torrentData && magnet) {
+    torrentData = activeTorrents.get(magnet);
     actualKey = magnet;
   }
 
-  if (torrent) {
+  if (torrentData) {
+    const torrent = torrentData.torrent;
     // Stop related streams
     const streamsToStop = Array.from(activeStreams.entries())
       .filter(
@@ -408,8 +536,20 @@ export const removeTorrent = (req, res) => {
 
 // Helper functions
 const addTorrentToClient = async (client, torrentInput, torrentId) => {
+  // Check if we're at capacity before adding new torrents
+  if (activeTorrents.size >= MAX_CONCURRENT_TORRENTS) {
+    // Try to enforce limits first
+    enforceTorrentLimits();
+    
+    // If still at capacity after cleanup, reject the request
+    if (activeTorrents.size >= MAX_CONCURRENT_TORRENTS) {
+      throw new Error(`Server at capacity: ${activeTorrents.size}/${MAX_CONCURRENT_TORRENTS} torrents. Please try again later.`);
+    }
+  }
+
   // Check if we already have this torrent in our Map
-  let torrent = activeTorrents.get(torrentId);
+  let torrentData = activeTorrents.get(torrentId);
+  let torrent = torrentData?.torrent;
 
   if (!torrent) {
     // Also check the WebTorrent client's internal torrents
@@ -435,7 +575,13 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
     });
 
     if (existingTorrent) {
-      activeTorrents.set(torrentId, existingTorrent);
+      const torrentMetadata = {
+        torrentId,
+        addedAt: Date.now(),
+        lastAccessed: Date.now(),
+        accessCount: 1,
+      };
+      activeTorrents.set(torrentId, { torrent: existingTorrent, metadata: torrentMetadata });
       return existingTorrent;
     }
 
@@ -452,7 +598,13 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
 
         newTorrent.on("ready", () => {
           clearTimeout(timeoutId);
-          activeTorrents.set(torrentId, newTorrent);
+          const torrentMetadata = {
+            torrentId,
+            addedAt: Date.now(),
+            lastAccessed: Date.now(),
+            accessCount: 1,
+          };
+          activeTorrents.set(torrentId, { torrent: newTorrent, metadata: torrentMetadata });
           resolve(newTorrent);
         });
 
@@ -468,7 +620,13 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
                 (t) => t.infoHash.toLowerCase() === hash.toLowerCase()
               );
               if (existingTorrent) {
-                activeTorrents.set(torrentId, existingTorrent);
+                const torrentMetadata = {
+                  torrentId,
+                  addedAt: Date.now(),
+                  lastAccessed: Date.now(),
+                  accessCount: 1,
+                };
+                activeTorrents.set(torrentId, { torrent: existingTorrent, metadata: torrentMetadata });
                 resolve(existingTorrent);
                 return;
               }
@@ -482,6 +640,10 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
         reject(syncError);
       }
     });
+  } else {
+    // Update access info for existing torrent
+    torrentData.metadata.lastAccessed = Date.now();
+    torrentData.metadata.accessCount++;
   }
 
   return torrent;
