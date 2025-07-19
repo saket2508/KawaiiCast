@@ -10,8 +10,9 @@ import { createWebTorrentClient, corsOptions } from "./config/webTorrent.js";
 import torrentRoutes from "./routes/torrentRoutes.js";
 import animeRoutes from "./routes/animeRoutes.js";
 
-// Import controllers for cleanup
-import { activeTorrents, startCleanupTimer, stopCleanupTimer } from "./controllers/torrentController.js";
+// Import services for cleanup
+import { startCleanupTimer, stopCleanupTimer } from "./services/cleanupService.js";
+import { destroyAllTorrents } from "./services/torrentManager.js";
 
 dotenv.config();
 
@@ -46,7 +47,7 @@ process.on("SIGINT", () => {
   stopCleanupTimer();
 
   // Destroy all torrents
-  activeTorrents.forEach((torrentData) => torrentData.torrent.destroy());
+  destroyAllTorrents();
 
   // Destroy WebTorrent client
   client.destroy(() => {
