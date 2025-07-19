@@ -1,19 +1,20 @@
 services:
   postgres:
     image: postgres:14
-    container_name: "${POSTGRES_CONTAINER_NAME}"
+    container_name: "${DB_CONTAINER_NAME}"
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
+    env_file:
+      - path: ./backend/.env
     restart: unless-stopped
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: "${BACKEND_BUILD_TARGET:-dev}" # switch to "dev" for dev builds
     env_file:
       - path: ./backend/.env
     ports:
@@ -24,26 +25,22 @@ services:
     depends_on:
       - postgres
     restart: always
-    command: ["npm", "run", "${BACKEND_CMD:-dev}"] # use "dev" in env for hot-reload
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: "${FRONTEND_BUILD_TARGET:-dev}" # set to "dev" in your .env to mount & watch
     env_file:
-      - path: ./frontend/.env
+      - path: ./frontend/.env.dev
     ports:
       - "3000:3000"
     volumes:
-      # for dev only—ignored in prod target
       - ./frontend:/app
       - /app/next
       - /app/node_modules
     depends_on:
       - backend
     restart: always
-    command: ["npm", "run", "${FRONTEND_CMD:-dev}"] # set FRONTEND_CMD=start in .env for production
 
 volumes:
   postgres_data:

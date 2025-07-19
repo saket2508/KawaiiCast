@@ -32,3 +32,5 @@ tasks/
 # Migrations
 migrations/
 apply_migrations.sh
+
+CLAUDE.md

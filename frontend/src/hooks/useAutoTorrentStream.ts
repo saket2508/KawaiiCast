@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { EpisodeTorrent } from "@/types/api";
 
 interface TorrentInfo {
@@ -52,6 +52,8 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
   const currentTorrentIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const selectedTorrentIndex = state.selectedFile?.index || null;
+
   // Load torrent info when torrent changes
   useEffect(() => {
     if (!torrent?.magnet) {
@@ -96,6 +98,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     }));
 
     try {
+      // delay fixed to 2 seconds to avoid rate limiting
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       const response = await fetch(`${BACKEND_URL}/torrent/info`, {
@@ -156,20 +159,21 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
   };
 
   // Stop streaming when component unmounts or torrent changes
-  const stopStream = async () => {
-    if (currentTorrentIdRef.current && state.selectedFile) {
+  const stopStream = useCallback(async () => {
+    if (currentTorrentIdRef.current && selectedTorrentIndex) {
       try {
+        console.log("stopping stream with file index:", selectedTorrentIndex);
         await fetch(
           `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
             currentTorrentIdRef.current
-          )}&file_index=${state.selectedFile.index}`,
+          )}&file_index=${selectedTorrentIndex}`,
           { method: "DELETE" }
         );
       } catch (error) {
         console.error("Error stopping stream:", error);
       }
     }
-  };
+  }, [selectedTorrentIndex]);
 
   // Retry loading if there was an error
   const retry = () => {

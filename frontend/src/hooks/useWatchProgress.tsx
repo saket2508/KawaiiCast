@@ -1,5 +1,4 @@
-"use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 export interface WatchProgress {
   animeId: number;
@@ -22,10 +21,15 @@ const createProgressKey = (animeId: number, episodeNumber: number): string => {
   return `${animeId}-${episodeNumber}`;
 };
 
-// Helper function to load watch history from localStorage
+// Check if executing in the browser environment
+const isBrowser =
+  typeof window !== "undefined" && typeof localStorage !== "undefined";
+
 const loadWatchHistory = (): WatchHistory => {
+  if (!isBrowser) return {};
+
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
       // Convert lastWatched strings back to Date objects
@@ -44,8 +48,10 @@ const loadWatchHistory = (): WatchHistory => {
 
 // Helper function to save watch history to localStorage
 const saveWatchHistory = (history: WatchHistory): void => {
+  if (!isBrowser) return;
+
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   } catch (error) {
     console.error("Failed to save watch history:", error);
   }
@@ -55,6 +61,15 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
   const [watchHistory, setWatchHistory] = useState<WatchHistory>(() =>
     loadWatchHistory()
   );
+
+  // Ensure watch history is loaded on the client after the initial mount.
+  useEffect(() => {
+    if (isBrowser) {
+      setWatchHistory(loadWatchHistory());
+    }
+    // The dependency array is intentionally left empty to run only once on mount.
+  }, []);
+
   const progressKey = createProgressKey(animeId, episodeNumber);
   const currentProgress = watchHistory[progressKey];
 

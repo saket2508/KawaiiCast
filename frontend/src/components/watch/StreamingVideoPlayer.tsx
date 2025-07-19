@@ -58,28 +58,6 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   // Control visibility timer
   const controlsTimeoutRef = useRef<NodeJS.Timeout>(null);
 
-  // ---- new refs to keep latest callback/flag values ----
-  const onProgressUpdateRef = useRef<typeof onProgressUpdate | undefined>(
-    undefined
-  );
-  const hasNextEpisodeRef = useRef<boolean>(hasNextEpisode);
-  const onPlayNextEpisodeRef = useRef<typeof onPlayNextEpisode | undefined>(
-    undefined
-  );
-
-  // Keep refs in sync with latest props
-  useEffect(() => {
-    onProgressUpdateRef.current = onProgressUpdate;
-  }, [onProgressUpdate]);
-
-  useEffect(() => {
-    hasNextEpisodeRef.current = hasNextEpisode;
-  }, [hasNextEpisode]);
-
-  useEffect(() => {
-    onPlayNextEpisodeRef.current = onPlayNextEpisode;
-  }, [onPlayNextEpisode]);
-
   // Fullscreen change event listener
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -187,8 +165,6 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasNextEpisode, onPlayNextEpisode]);
 
-  // -------- Controlled video player handlers --------
-
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -208,15 +184,15 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     setCurrentTime(current);
     setDuration(total); // keep duration in sync
 
-    if (onProgressUpdateRef.current && total > 0) {
+    if (onProgressUpdate && total > 0) {
       const progressPercent = (current / total) * 100;
-      onProgressUpdateRef.current(current, total, progressPercent);
+      onProgressUpdate(current, total, progressPercent);
     }
 
-    if (hasNextEpisodeRef.current && total > 0 && total - current <= 30) {
+    if (hasNextEpisode && total > 0 && total - current <= 30) {
       setShowNextEpisodePrompt(true);
     }
-  }, []);
+  }, [hasNextEpisode, onProgressUpdate]);
 
   const handleVolumeChange = useCallback(() => {
     const video = videoRef.current;
@@ -227,10 +203,10 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
   const handleEnded = useCallback(() => {
     setIsPlaying(false);
-    if (hasNextEpisodeRef.current && onPlayNextEpisodeRef.current) {
+    if (hasNextEpisode && onPlayNextEpisode) {
       setShowNextEpisodePrompt(true);
     }
-  }, []);
+  }, [hasNextEpisode, onPlayNextEpisode]);
 
   // Update video source when stream URL changes
   useEffect(() => {
@@ -246,13 +222,13 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
-      if (torrentStream.stopStream) {
+      if (torrentStream?.stopStream) {
         console.log("stopping stream");
         void torrentStream.stopStream();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [torrentStream.stopStream]);
 
   // Controls visibility management
   const showControlsTemporarily = () => {
@@ -531,7 +507,8 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
             </div>
 
             <span className="text-white text-sm">
-              {formatTime(currentTime)} / {formatTime(duration)}
+              {formatTime(isNaN(currentTime) ? 0 : currentTime)} /{" "}
+              {formatTime(isNaN(duration) ? 0 : duration)}
             </span>
           </div>
 

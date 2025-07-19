@@ -336,7 +336,7 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
     torrent = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error("Timeout: Could not fetch torrent metadata"));
-      }, 120000);
+      }, 240000);
 
       try {
         const newTorrent = client.add(torrentInput, {

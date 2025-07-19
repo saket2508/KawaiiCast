@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useWatchContext } from "@/hooks/useWatchContext";
 import { useWatchProgress } from "@/hooks/useWatchProgress";
@@ -76,17 +76,20 @@ export const ContextualWatchPage: React.FC<ContextualWatchPageProps> = ({
   const context = useWatchContext(animeId, episodeNumber);
   const watchProgress = useWatchProgress(animeId, episodeNumber);
 
-  const handleNavigateEpisode = (newEpisodeNumber: number) => {
-    router.push(`/anime/${animeId}/watch/${newEpisodeNumber}`);
-  };
+  const handleNavigateEpisode = useCallback(
+    (newEpisodeNumber: number) => {
+      router.push(`/anime/${animeId}/watch/${newEpisodeNumber}`);
+    },
+    [animeId, router]
+  );
 
-  const handleAutoPlayNext = () => {
+  const handleAutoPlayNext = useCallback(() => {
     if (context.nextEpisodeNumber) {
       // Mark current episode as completed when auto-continuing
       watchProgress.markCompleted();
       handleNavigateEpisode(context.nextEpisodeNumber);
     }
-  };
+  }, [context.nextEpisodeNumber, watchProgress, handleNavigateEpisode]);
 
   const handleBackToAnime = () => {
     router.push(`/anime/${animeId}?tab=episodes`);
