@@ -13,6 +13,64 @@ import {
 export const activeTorrents = new Map(); // torrentId -> torrent object
 export const activeStreams = new Map(); // streamId -> stream info
 
+// Stream timeout configuration
+const STREAM_TIMEOUT = process.env.NODE_ENV === 'test' ? 10 * 1000 : 30 * 60 * 1000; // 10s for testing, 30min for production
+const CLEANUP_INTERVAL = process.env.NODE_ENV === 'test' ? 5 * 1000 : 5 * 60 * 1000; // 5s for testing, 5min for production
+
+// Cleanup timer for abandoned streams
+let cleanupTimer = null;
+
+// Function to clean up inactive streams
+const cleanupInactiveStreams = () => {
+  const now = Date.now();
+  const streamsToDelete = [];
+  
+  // Check each active stream for inactivity
+  for (const [streamId, streamInfo] of activeStreams.entries()) {
+    const timeSinceLastActivity = now - streamInfo.lastActivity;
+    
+    if (timeSinceLastActivity > STREAM_TIMEOUT) {
+      console.log(`Cleaning up inactive stream: ${streamId} (inactive for ${Math.round(timeSinceLastActivity / 1000)}s)`);
+      streamsToDelete.push(streamId);
+      
+      // Destroy the stream if it exists
+      if (streamInfo.stream) {
+        try {
+          streamInfo.stream.destroy();
+        } catch (error) {
+          console.error(`Error destroying stream ${streamId}:`, error);
+        }
+      }
+    }
+  }
+  
+  // Remove inactive streams from the map
+  streamsToDelete.forEach(streamId => activeStreams.delete(streamId));
+  
+  if (streamsToDelete.length > 0) {
+    console.log(`Cleaned up ${streamsToDelete.length} inactive streams`);
+  }
+};
+
+// Start the cleanup timer
+const startCleanupTimer = () => {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+  }
+  
+  cleanupTimer = setInterval(cleanupInactiveStreams, CLEANUP_INTERVAL);
+  console.log(`Started stream cleanup timer (${CLEANUP_INTERVAL / 1000}s interval)`);
+};
+
+// Stop the cleanup timer
+const stopCleanupTimer = () => {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+    console.log('Stopped stream cleanup timer');
+  }
+};
+
 // Health check
 export const getHealth = (req, res) => {
   const client = req.app.locals.webTorrentClient;
@@ -24,8 +82,16 @@ export const getHealth = (req, res) => {
     webTorrentRatio: client.ratio,
     downloadSpeed: formatBytes(client.downloadSpeed),
     uploadSpeed: formatBytes(client.uploadSpeed),
+    cleanupTimer: {
+      running: cleanupTimer !== null,
+      interval: CLEANUP_INTERVAL,
+      timeout: STREAM_TIMEOUT,
+    },
   });
 };
+
+// Export cleanup functions for use in app.js
+export { startCleanupTimer, stopCleanupTimer };
 
 // Get torrent info via GET (magnet URI)
 export const getTorrentInfo = async (req, res) => {
@@ -146,14 +212,18 @@ export const streamTorrent = async (req, res) => {
 
     const streamId = getStreamId(torrentIdentifier, fileIndex);
 
-    // Store stream info
-    activeStreams.set(streamId, {
+    // Store stream info with activity tracking
+    const streamInfo = {
       torrentIdentifier,
       fileIndex,
       fileName: file.name,
       fileSize: file.length,
       startTime: Date.now(),
-    });
+      lastActivity: Date.now(), // Track when stream was last active
+      stream: null, // Will store the actual stream object
+    };
+    
+    activeStreams.set(streamId, streamInfo);
 
     // Handle range requests
     const range = req.headers.range;
@@ -191,21 +261,44 @@ export const streamTorrent = async (req, res) => {
 
     // Create and pipe stream
     const stream = file.createReadStream({ start, end });
+    
+    // Store the stream reference for cleanup
+    streamInfo.stream = stream;
+
+    // Track activity on data reads
+    stream.on('data', () => {
+      // Update last activity timestamp when data is actually read
+      const currentStreamInfo = activeStreams.get(streamId);
+      if (currentStreamInfo) {
+        currentStreamInfo.lastActivity = Date.now();
+      }
+    });
 
     stream.on("error", (err) => {
       console.error("Stream error:", err);
+      // Clean up on error
+      activeStreams.delete(streamId);
       if (!res.headersSent) {
         res.status(500).json({ error: "Stream error" });
       }
     });
 
-    req.on("close", () => {
-      stream.destroy();
+    // Enhanced cleanup function
+    const cleanupStream = () => {
+      console.log(`Cleaning up stream: ${streamId}`);
+      try {
+        stream.destroy();
+      } catch (error) {
+        console.error(`Error destroying stream ${streamId}:`, error);
+      }
       activeStreams.delete(streamId);
-    });
+    };
 
-    req.on("aborted", () => {
-      stream.destroy();
+    req.on("close", cleanupStream);
+    req.on("aborted", cleanupStream);
+
+    // Also cleanup if response finishes normally
+    res.on('finish', () => {
       activeStreams.delete(streamId);
     });
 
@@ -241,16 +334,29 @@ export const stopStream = (req, res) => {
 };
 
 // List active streams
-export const listStreams = (req, res) => {
+export const listStreams = (_req, res) => {
+  const now = Date.now();
   const streams = Array.from(activeStreams.entries()).map(([id, info]) => ({
     id,
-    ...info,
-    duration: Date.now() - info.startTime,
+    torrentIdentifier: info.torrentIdentifier,
+    fileIndex: info.fileIndex,
+    fileName: info.fileName,
+    fileSize: info.fileSize,
+    startTime: info.startTime,
+    duration: now - info.startTime,
+    lastActivity: info.lastActivity,
+    timeSinceLastActivity: now - info.lastActivity,
+    isActive: (now - info.lastActivity) < STREAM_TIMEOUT,
   }));
 
   res.json({
     activeStreams: activeStreams.size,
     streams,
+    cleanup: {
+      timeout: STREAM_TIMEOUT,
+      interval: CLEANUP_INTERVAL,
+      timerRunning: cleanupTimer !== null,
+    },
   });
 };
 
@@ -383,7 +489,7 @@ const addTorrentToClient = async (client, torrentInput, torrentId) => {
 
 const buildTorrentResponse = async (torrent, torrentId) => {
   const files = await Promise.all(
-    torrent.files.map(async (file, idx) => ({
+    torrent.files.map(async (file) => ({
       ...prepareFileInfo([file])[0],
       embeddedSubs: file.name.endsWith(".mkv") ? await probeForSubs(file) : [],
     }))
