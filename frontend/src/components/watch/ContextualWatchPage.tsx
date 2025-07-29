@@ -178,6 +178,12 @@ export const ContextualWatchPage: React.FC<ContextualWatchPageProps> = ({
         onPlayNextEpisode={handleAutoPlayNext}
         onProgressUpdate={watchProgress.updateProgress}
         initialProgress={watchProgress.resumeTime}
+        animeBackdrop={
+          context.anime?.bannerImage || context.anime?.coverImage
+        }
+        animeTitle={
+          context.anime?.titleEnglish || context.anime?.title
+        }
       />
 
       {/* Enhanced Episode Info Bar with Progress */}

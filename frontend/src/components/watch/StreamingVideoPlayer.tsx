@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
+import Image from "next/image";
 import {
   Play,
   Pause,
@@ -29,6 +30,8 @@ export interface StreamingVideoPlayerProps {
   ) => void;
   initialProgress?: number; // Resume time in seconds
   className?: string;
+  animeBackdrop?: string; // Optional anime backdrop for loading state
+  animeTitle?: string; // Optional anime title for loading state
 }
 
 export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
@@ -39,6 +42,8 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   onProgressUpdate,
   initialProgress = 0,
   className = "",
+  animeBackdrop,
+  animeTitle,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,6 +56,9 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [isVideoBuffering, setIsVideoBuffering] = useState(false);
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  const [videoLoaded, setVideoLoaded] = useState(false);
 
   // Auto torrent streaming hook
   const torrentStream = useAutoTorrentStream(torrent);
@@ -170,6 +178,7 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     if (!video) return;
     setDuration(video.duration);
     setVolume(video.volume);
+    setVideoLoaded(true);
     // Seek to initial progress if provided
     if (initialProgress > 0 && initialProgress < video.duration) {
       video.currentTime = initialProgress;
@@ -208,6 +217,25 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     }
   }, [hasNextEpisode, onPlayNextEpisode]);
 
+  // Video buffering event handlers
+  const handleWaiting = useCallback(() => {
+    setIsVideoBuffering(true);
+  }, []);
+
+  const handleCanPlay = useCallback(() => {
+    setIsVideoBuffering(false);
+    // Delayed hide of loading overlay for smooth transition
+    setTimeout(() => setShowLoadingOverlay(false), 300);
+  }, []);
+
+  const handleSeeking = useCallback(() => {
+    setIsVideoBuffering(true);
+  }, []);
+
+  const handleSeeked = useCallback(() => {
+    setIsVideoBuffering(false);
+  }, []);
+
   // Update video source when stream URL changes
   useEffect(() => {
     const video = videoRef.current;
@@ -216,8 +244,22 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     if (torrentStream.streamUrl && torrentStream.isReady) {
       video.src = torrentStream.streamUrl;
       video.load();
+      setVideoLoaded(false); // Reset video loaded state
     }
   }, [torrentStream.streamUrl, torrentStream.isReady]);
+
+  // Manage loading overlay visibility
+  useEffect(() => {
+    const shouldShowOverlay = 
+      torrentStream.isLoading || 
+      torrentStream.isBuffering || 
+      isVideoBuffering || 
+      !videoLoaded;
+    
+    if (shouldShowOverlay) {
+      setShowLoadingOverlay(true);
+    }
+  }, [torrentStream.isLoading, torrentStream.isBuffering, isVideoBuffering, videoLoaded]);
 
   // Cleanup stream on unmount
   useEffect(() => {
@@ -330,25 +372,77 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  // Render loading state
+  // Render loading state with backdrop (for initial load only)
   if (torrentStream.isLoading || torrentStream.isBuffering) {
     return (
       <div
-        className={`aspect-video bg-gray-900 flex items-center justify-center ${className}`}
+        className={`relative aspect-video bg-gray-900 overflow-hidden ${className}`}
       >
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mb-4"></div>
-          <p className="text-white text-lg mb-2">
-            {torrentStream.isLoading ? "Loading torrent..." : "Buffering..."}
-          </p>
-          {torrentStream.fileName && (
-            <p className="text-gray-400 text-sm">{torrentStream.fileName}</p>
-          )}
-          {torrentStream.progress > 0 && (
-            <p className="text-gray-400 text-sm">
-              Download: {torrentStream.progress}%
-            </p>
-          )}
+        {/* Anime Backdrop */}
+        {animeBackdrop && (
+          <div className="absolute inset-0">
+            <Image
+              src={animeBackdrop}
+              alt={animeTitle || "Anime backdrop"}
+              fill
+              className="object-cover"
+              priority
+            />
+            {/* Gradient overlay for better text readability */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/50 to-black/30" />
+          </div>
+        )}
+
+        {/* Loading content */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="text-center z-10 max-w-md mx-auto px-6">
+            {/* Animated loading spinner */}
+            <div className="relative mb-6">
+              <div className="animate-spin rounded-full h-16 w-16 border-4 border-orange-500/30 border-t-orange-500 mx-auto"></div>
+              <div className="absolute inset-0 rounded-full h-16 w-16 border-4 border-transparent border-t-orange-400 animate-spin [animation-duration:0.8s] [animation-direction:reverse] mx-auto"></div>
+            </div>
+
+            {/* Loading text with smooth transitions */}
+            <div className="space-y-3">
+              <h3 className="text-xl font-semibold text-white">
+                {torrentStream.isLoading
+                  ? "Loading torrent..."
+                  : isVideoBuffering
+                  ? "Buffering video..."
+                  : "Preparing stream..."}
+              </h3>
+
+              {animeTitle && (
+                <p className="text-orange-200 text-sm font-medium">
+                  {animeTitle} • Episode {episodeNumber}
+                </p>
+              )}
+
+              {torrentStream.fileName && (
+                <p className="text-gray-300 text-sm truncate">
+                  {torrentStream.fileName}
+                </p>
+              )}
+
+              {torrentStream.progress > 0 && (
+                <div className="space-y-2">
+                  <p className="text-gray-400 text-sm">
+                    Download progress: {torrentStream.progress}%
+                  </p>
+                  {/* Progress bar */}
+                  <div className="w-full bg-gray-700 rounded-full h-1.5">
+                    <div
+                      className="bg-orange-500 h-1.5 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${torrentStream.progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Subtle pulsing animation for "breathing" effect */}
+            <div className="absolute inset-0 bg-white/5 rounded-xl animate-pulse [animation-duration:3s]" />
+          </div>
         </div>
       </div>
     );
@@ -385,6 +479,55 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       onClick={handleContainerClick}
       onFocus={showControlsTemporarily}
     >
+      {/* Loading overlay with smooth transitions */}
+      {showLoadingOverlay && (
+        <div
+          className={`absolute inset-0 z-30 transition-opacity duration-500 ${
+            torrentStream.isLoading || torrentStream.isBuffering || isVideoBuffering
+              ? "opacity-100"
+              : "opacity-0"
+          }`}
+          style={{
+            background: animeBackdrop 
+              ? "linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 100%)"
+              : "rgb(17, 24, 39)"
+          }}
+        >
+          {/* Anime Backdrop for overlay */}
+          {animeBackdrop && (
+            <div className="absolute inset-0">
+              <Image
+                src={animeBackdrop}
+                alt={animeTitle || "Anime backdrop"}
+                fill
+                className="object-cover"
+                priority
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/50 to-black/30" />
+            </div>
+          )}
+
+          {/* Loading content with fade-in animation */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center z-10 max-w-md mx-auto px-6 animate-fade-in">
+              {/* Animated loading spinner */}
+              <div className="relative mb-6">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500/30 border-t-orange-500 mx-auto"></div>
+                <div className="absolute inset-0 rounded-full h-12 w-12 border-4 border-transparent border-t-orange-400 animate-spin [animation-duration:0.8s] [animation-direction:reverse] mx-auto"></div>
+              </div>
+
+              {/* Status text */}
+              <p className="text-white text-sm font-medium">
+                {torrentStream.isLoading
+                  ? "Loading torrent..."
+                  : isVideoBuffering
+                  ? "Buffering..."
+                  : "Preparing stream..."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* File Selector Overlay */}
       {showFileSelector && torrentStream.files.length > 0 && (
         <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
@@ -408,9 +551,12 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Video element with fade-in transition */}
       <video
         ref={videoRef}
-        className="w-full h-full"
+        className={`w-full h-full transition-opacity duration-500 ${
+          videoLoaded && !isVideoBuffering ? "opacity-100" : "opacity-0"
+        }`}
         controls={false}
         preload="metadata"
         onLoadedMetadata={handleLoadedMetadata}
@@ -419,6 +565,10 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
         onPause={() => setIsPlaying(false)}
         onVolumeChange={handleVolumeChange}
         onEnded={handleEnded}
+        onWaiting={handleWaiting}
+        onCanPlay={handleCanPlay}
+        onSeeking={handleSeeking}
+        onSeeked={handleSeeked}
       />
 
       {/* Next Episode Prompt */}
