@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { animeApi, ApiError } from "@/lib/animeApi";
+import { TorrentInfo } from "@/types/torrent-stream";
 
 // Query keys for consistent caching
 export const animeQueryKeys = {
@@ -12,6 +13,12 @@ export const animeQueryKeys = {
     [...animeQueryKeys.all, "episodes", id, { page }] as const,
   torrents: (id: number, episode?: number, quality?: string) =>
     [...animeQueryKeys.all, "torrents", id, { episode, quality }] as const,
+};
+
+// Query keys for torrent operations
+export const torrentQueryKeys = {
+  all: ["torrent"] as const,
+  info: (magnetUri: string) => [...torrentQueryKeys.all, "info", magnetUri] as const,
 };
 
 // Search anime hook with debouncing handled by caller
@@ -151,4 +158,74 @@ export const useAnimeData = (query: string) => {
     isSearching: false,
     refetch: trendingQuery.refetch,
   };
+};
+
+// Torrent info query hook with smart retry logic
+export const useTorrentInfoQuery = (
+  magnetUri: string | null,
+  options?: { enabled?: boolean }
+) => {
+  const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+  
+  return useQuery({
+    queryKey: torrentQueryKeys.info(magnetUri || ""),
+    queryFn: async ({ signal }): Promise<TorrentInfo> => {
+      if (!magnetUri) {
+        throw new Error("No magnet URI provided");
+      }
+
+      const response = await fetch(`${BACKEND_URL}/torrent/info`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          magnet: magnetUri,
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to get torrent info");
+      }
+
+      const torrentInfo: TorrentInfo = await response.json();
+      
+      // If torrent is not ready, throw a special error to trigger retry
+      if (!torrentInfo.ready) {
+        throw new Error("TORRENT_NOT_READY");
+      }
+
+      return torrentInfo;
+    },
+    enabled: (options?.enabled ?? true) && Boolean(magnetUri),
+    staleTime: 30 * 1000, // 30 seconds - torrent state can change
+    gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+    retry: (failureCount, error) => {
+      // Don't retry on certain errors
+      if (error instanceof Error) {
+        // Don't retry if magnet URI is invalid or torrent not found
+        if (error.message.includes("invalid") || error.message.includes("not found")) {
+          return false;
+        }
+        
+        // Special handling for torrent not ready - retry with shorter limit
+        if (error.message === "TORRENT_NOT_READY") {
+          return failureCount < 10; // Max 10 retries for readiness
+        }
+      }
+      
+      // Retry up to 3 times for other errors (rate limiting, network issues)
+      return failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => {
+      // Progressive delay: 1s, 1.2s, 1.44s, etc. up to 3s max
+      const baseDelay = 1000;
+      const backoffMultiplier = 1.2;
+      const maxDelay = 3000;
+      
+      return Math.min(baseDelay * Math.pow(backoffMultiplier, attemptIndex), maxDelay);
+    },
+  });
 };

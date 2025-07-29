@@ -331,43 +331,102 @@ export const searchAnimeTorrents = async (
   alternateTitles = []
 ) => {
   try {
-    console.log("searchAnimeTorrents called", {
+    const searchStartTime = Date.now();
+    console.log("🔍 searchAnimeTorrents called", {
       animeTitle,
       episodeNumber,
       aids,
       eids,
       quality,
     });
+
     let allTorrents = [];
-
-    if (aids) {
-      try {
-        const idBasedTorrents = await getAnimeToshoByIds(quality, aids, eids);
-
-        if (idBasedTorrents.length > 0) {
-          allTorrents = allTorrents.concat(idBasedTorrents);
-        }
-      } catch (error) {
-        console.warn(
-          "⚠️ ID-based search failed, falling back to text search:",
-          error.message
-        );
-      }
-    }
-
     const titlesToSearch = [animeTitle, ...alternateTitles];
-
     const allQueries = generateQueriesFromTitles(titlesToSearch, episodeNumber);
 
-    for (const query of allQueries) {
-      const torrents = await searchTorrents(query, "anime", "nyaa");
-      const filtered = filterTorrentsByEpisode(torrents, episodeNumber);
+    // Create parallel search operations
+    const searchOperations = [];
 
-      if (filtered.length > 0) {
-        allTorrents = allTorrents.concat(filtered);
-        break; // Exit on first successful query
-      }
+    // Add ID-based search if available
+    if (aids) {
+      const idSearchPromise = getAnimeToshoByIds(quality, aids, eids)
+        .then((torrents) => ({
+          type: "id-based",
+          torrents,
+          success: torrents.length > 0,
+        }))
+        .catch((error) => {
+          console.warn("⚠️ ID-based search failed:", error.message);
+          return { type: "id-based", torrents: [], success: false };
+        });
+
+      searchOperations.push(idSearchPromise);
     }
+
+    // Add text-based queries to parallel operations
+    const textSearchPromise = Promise.allSettled(
+      allQueries.map(async (query) => {
+        try {
+          const torrents = await searchTorrents(query, "anime", "nyaa");
+          const filtered = filterTorrentsByEpisode(torrents, episodeNumber);
+          return {
+            type: "text-based",
+            query,
+            torrents: filtered,
+            success: filtered.length > 0,
+          };
+        } catch (error) {
+          console.warn(`Query failed: "${query}" - ${error.message}`);
+          return { type: "text-based", query, torrents: [], success: false };
+        }
+      })
+    ).then((results) => ({
+      type: "text-search-batch",
+      results: results
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
+        .filter((result) => result.success)
+        .sort((a, b) => b.torrents.length - a.torrents.length),
+    }));
+
+    searchOperations.push(textSearchPromise);
+
+    // Execute all search operations in parallel
+    console.log(
+      `🚀 Executing ${searchOperations.length} search operations in parallel:`
+    );
+    console.log(
+      `   - ${aids ? "ID-based search (AnimeTosho)" : "No ID-based search"}`
+    );
+    console.log(`   - Text-based search (${allQueries.length} queries)`);
+
+    const searchResults = await Promise.allSettled(searchOperations);
+
+    // Process all results
+    searchResults.forEach((result) => {
+      if (result.status === "fulfilled") {
+        const searchResult = result.value;
+
+        if (searchResult.type === "id-based" && searchResult.success) {
+          console.log(
+            `✅ ID-based search found ${searchResult.torrents.length} torrents`
+          );
+          allTorrents = allTorrents.concat(searchResult.torrents);
+        } else if (searchResult.type === "text-search-batch") {
+          const totalFound = searchResult.results.reduce(
+            (sum, r) => sum + r.torrents.length,
+            0
+          );
+          console.log(
+            `✅ Text-based search found ${totalFound} torrents from ${searchResult.results.length} successful queries`
+          );
+
+          searchResult.results.forEach((queryResult) => {
+            allTorrents = allTorrents.concat(queryResult.torrents);
+          });
+        }
+      }
+    });
 
     // Fallback: broader search if no specific matches
     if (allTorrents.length === 0) {
@@ -379,6 +438,14 @@ export const searchAnimeTorrents = async (
     // Process final results
     const uniqueTorrents = removeDuplicateTorrents(allTorrents);
     const sortedTorrents = sortTorrents(uniqueTorrents);
+
+    // console.log(JSON.stringify(sortedTorrents, null, 2));
+
+    // Performance logging
+    const searchDuration = Date.now() - searchStartTime;
+    console.log(
+      `⚡ Search completed in ${searchDuration}ms - Found ${sortedTorrents.length} unique torrents`
+    );
 
     return sortedTorrents;
   } catch (error) {

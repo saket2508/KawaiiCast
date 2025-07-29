@@ -188,6 +188,7 @@ export const getAnimeTorrents = async (req, res) => {
       "all",
       romajiTitle ? [romajiTitle] : []
     );
+
     // Filter by quality if specified
     let filteredTorrents = torrents;
     if (quality) {
@@ -196,10 +197,7 @@ export const getAnimeTorrents = async (req, res) => {
       );
     }
 
-    const bestTorrents = torrentService.getBestTorrents(
-      filteredTorrents,
-      episodeNumber
-    );
+    const bestTorrents = torrentService.getBestTorrents(filteredTorrents);
 
     const limitedTorrents = bestTorrents.slice(0, parseInt(limit));
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 export interface WatchProgress {
   animeId: number;
@@ -25,49 +25,220 @@ const createProgressKey = (animeId: number, episodeNumber: number): string => {
 const isBrowser =
   typeof window !== "undefined" && typeof localStorage !== "undefined";
 
+// Type for unknown data from localStorage that needs validation
+type UnknownWatchProgress = {
+  animeId?: unknown;
+  episodeNumber?: unknown;
+  currentTime?: unknown;
+  duration?: unknown;
+  progress?: unknown;
+  completed?: unknown;
+  lastWatched?: unknown;
+  [key: string]: unknown;
+};
+
+// Helper function to validate WatchProgress data structure
+const validateWatchProgress = (data: unknown): data is WatchProgress => {
+  if (!data || typeof data !== "object" || data === null) {
+    return false;
+  }
+  
+  const progress = data as UnknownWatchProgress;
+  
+  return (
+    typeof progress.animeId === "number" &&
+    typeof progress.episodeNumber === "number" &&
+    typeof progress.currentTime === "number" &&
+    typeof progress.duration === "number" &&
+    typeof progress.progress === "number" &&
+    typeof progress.completed === "boolean" &&
+    progress.animeId > 0 &&
+    progress.episodeNumber > 0 &&
+    progress.currentTime >= 0 &&
+    progress.duration > 0 &&
+    progress.progress >= 0 &&
+    progress.progress <= 100
+  );
+};
+
+// Type for unknown data from localStorage that might be WatchHistory
+type UnknownWatchHistory = {
+  [key: string]: unknown;
+};
+
+// Helper function to validate entire WatchHistory structure
+const validateWatchHistory = (data: unknown): WatchHistory => {
+  if (!data || typeof data !== "object" || data === null) {
+    return {};
+  }
+
+  const unknownHistory = data as UnknownWatchHistory;
+  const validHistory: WatchHistory = {};
+
+  Object.keys(unknownHistory).forEach((key) => {
+    if (validateWatchProgress(unknownHistory[key])) {
+      // TypeScript knows this is valid WatchProgress due to the type guard
+      validHistory[key] = unknownHistory[key] as WatchProgress;
+    } else {
+      console.warn(`Invalid watch progress data for key ${key}, skipping`);
+    }
+  });
+
+  return validHistory;
+};
+
 const loadWatchHistory = (): WatchHistory => {
   if (!isBrowser) return {};
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Convert lastWatched strings back to Date objects
-      Object.keys(parsed).forEach((key) => {
-        if (parsed[key].lastWatched) {
-          parsed[key].lastWatched = new Date(parsed[key].lastWatched);
-        }
-      });
-      return parsed;
+    if (!stored) {
+      return {};
     }
+
+    // Parse JSON with error handling
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stored);
+    } catch (parseError) {
+      console.error("Failed to parse watch history JSON:", parseError);
+      // Clear corrupted data
+      localStorage.removeItem(STORAGE_KEY);
+      return {};
+    }
+
+    // Validate data structure
+    const validatedHistory = validateWatchHistory(parsed);
+
+    // Convert lastWatched strings back to Date objects for valid entries
+    Object.keys(validatedHistory).forEach((key) => {
+      const progress = validatedHistory[key];
+      if (progress.lastWatched) {
+        try {
+          // Handle both string and existing Date objects
+          if (typeof progress.lastWatched === "string") {
+            progress.lastWatched = new Date(progress.lastWatched);
+          }
+
+          // Validate the date is valid
+          if (isNaN(progress.lastWatched.getTime())) {
+            progress.lastWatched = new Date();
+          }
+        } catch (dateError) {
+          console.warn(`Invalid date for progress ${key}, using current date:`, dateError);
+          progress.lastWatched = new Date();
+        }
+      } else {
+        progress.lastWatched = new Date();
+      }
+    });
+
+    return validatedHistory;
   } catch (error) {
     console.error("Failed to load watch history:", error);
+    // Clear potentially corrupted data
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (removeError) {
+      console.error("Failed to clear corrupted watch history:", removeError);
+    }
+    return {};
   }
-  return {};
 };
 
 // Helper function to save watch history to localStorage
-const saveWatchHistory = (history: WatchHistory): void => {
-  if (!isBrowser) return;
+const saveWatchHistory = (history: WatchHistory): boolean => {
+  if (!isBrowser) return false;
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    const serialized = JSON.stringify(history);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    return true;
   } catch (error) {
-    console.error("Failed to save watch history:", error);
+    // Handle specific localStorage errors
+    if (error instanceof Error) {
+      if (
+        error.name === "QuotaExceededError" ||
+        error.name === "NS_ERROR_DOM_QUOTA_REACHED"
+      ) {
+        console.warn("localStorage quota exceeded, attempting cleanup...");
+
+        // Try to free up space by removing oldest entries
+        const sortedEntries = Object.entries(history).sort(
+          ([, a], [, b]) => a.lastWatched.getTime() - b.lastWatched.getTime()
+        );
+
+        // Keep only the most recent 50 entries
+        const recentEntries = sortedEntries.slice(-50);
+        const cleanedHistory: WatchHistory = {};
+
+        recentEntries.forEach(([key, value]) => {
+          cleanedHistory[key] = value;
+        });
+
+        try {
+          const cleanedSerialized = JSON.stringify(cleanedHistory);
+          localStorage.setItem(STORAGE_KEY, cleanedSerialized);
+          console.log(
+            `Cleaned up watch history, kept ${recentEntries.length} most recent entries`
+          );
+          return true;
+        } catch (cleanupError) {
+          console.error("Failed to save even after cleanup:", cleanupError);
+          return false;
+        }
+      } else {
+        console.error("Failed to save watch history:", error.message);
+      }
+    } else {
+      console.error("Unknown error saving watch history:", error);
+    }
+    return false;
   }
 };
 
 export const useWatchProgress = (animeId: number, episodeNumber: number) => {
-  const [watchHistory, setWatchHistory] = useState<WatchHistory>(() =>
-    loadWatchHistory()
-  );
+  // Initialize with empty state to prevent hydration mismatch
+  const [watchHistory, setWatchHistory] = useState<WatchHistory>({});
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Ensure watch history is loaded on the client after the initial mount.
-  useEffect(() => {
-    if (isBrowser) {
-      setWatchHistory(loadWatchHistory());
+  // Use ref to track the latest watchHistory for saving to avoid race conditions
+  const watchHistoryRef = useRef<WatchHistory>(watchHistory);
+  watchHistoryRef.current = watchHistory;
+
+  // Debounced save to localStorage to prevent race conditions
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const debouncedSave = useCallback((history: WatchHistory) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
     }
-    // The dependency array is intentionally left empty to run only once on mount.
+
+    saveTimeoutRef.current = setTimeout(() => {
+      const success = saveWatchHistory(history);
+      if (!success) {
+        console.warn("Failed to save watch progress to localStorage");
+        // Could emit an event here for UI notification if needed
+      }
+    }, 100); // 100ms debounce
+  }, []);
+
+  // Load watch history only on client after mount to prevent hydration mismatch
+  useEffect(() => {
+    if (isBrowser && !isLoaded) {
+      const loadedHistory = loadWatchHistory();
+      setWatchHistory(loadedHistory);
+      setIsLoaded(true);
+    }
+  }, [isLoaded]);
+
+  // Cleanup timeout on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, []);
 
   const progressKey = createProgressKey(animeId, episodeNumber);
@@ -99,11 +270,12 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
           ...prev,
           [progressKey]: newProgress,
         };
-        saveWatchHistory(updated);
+        // Use debounced save to prevent race conditions
+        debouncedSave(updated);
         return updated;
       });
     },
-    [animeId, episodeNumber, progressKey]
+    [animeId, episodeNumber, progressKey, debouncedSave]
   );
 
   // Mark episode as completed
@@ -121,20 +293,22 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
           lastWatched: new Date(),
         },
       };
-      saveWatchHistory(updated);
+      // Use debounced save to prevent race conditions
+      debouncedSave(updated);
       return updated;
     });
-  }, [progressKey]);
+  }, [progressKey, debouncedSave]);
 
   // Remove progress for specific episode
   const clearProgress = useCallback(() => {
     setWatchHistory((prev) => {
       const updated = { ...prev };
       delete updated[progressKey];
-      saveWatchHistory(updated);
+      // Use debounced save to prevent race conditions
+      debouncedSave(updated);
       return updated;
     });
-  }, [progressKey]);
+  }, [progressKey, debouncedSave]);
 
   // Get progress for any episode of the anime
   const getEpisodeProgress = useCallback(
@@ -187,6 +361,9 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
     // Query functions
     getEpisodeProgress,
     getAnimeProgress,
+
+    // Loading state
+    isLoaded,
 
     // Raw data
     watchHistory,

@@ -1,29 +1,5 @@
 import { useState, useRef } from "react";
-
-interface TorrentFile {
-  index: number;
-  name: string;
-  size: number;
-  path: string;
-  isVideo: boolean;
-  isAudio: boolean;
-  isPlayable: boolean;
-}
-
-interface TorrentInfo {
-  name: string;
-  infoHash: string;
-  magnetURI: string;
-  torrentId: string;
-  files: TorrentFile[];
-  totalSize: number;
-  progress: number;
-  downloadSpeed: string;
-  uploadSpeed: string;
-  numPeers: number;
-  ready: boolean;
-  uploadedFileName?: string;
-}
+import { TorrentInfo } from "@/types/torrent-stream";
 
 const BACKEND_URL = "http://localhost:8080"; // Adjust as needed
 
