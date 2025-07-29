@@ -1,29 +1,35 @@
 FROM node:18-alpine
 
-# Set working directory
 WORKDIR /app
+
+# Install system dependencies
+RUN apk add --no-cache \
+  build-base \
+  python3 \
+  make \
+  git \
+  ffmpeg
 
 # Copy package files
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production && apk add --no-cache postgresql-client bash
+RUN npm ci --legacy-peer-deps
 
-# Copy application code
+# Copy source code
 COPY . .
 
-# Copy custom entrypoint script and make it executable
-RUN chmod +x apply_migrations.sh
+# Make migration script executable
+RUN chmod +x ./apply_migrations.sh
 
 # Expose port
 EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+  CMD node -e "require('http').get('http://localhost:8080/health', res => process.exit(res.statusCode === 200 ? 0 : 1))"
 
-# Set entrypoint to run migrations then start app
+# Run migrations then start app
 ENTRYPOINT ["./apply_migrations.sh"]
-
-# Default command starts the application
-CMD ["npm", "start"] 
+CMD ["npm", "run", "dev"]
+  

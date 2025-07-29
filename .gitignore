@@ -15,6 +15,7 @@ node_modules/
 # Editor directories and files
 .idea
 .vscode
+.cursor
 *.suo
 *.ntvs*
 *.njsproj
@@ -31,3 +32,5 @@ tasks/
 # Migrations
 migrations/
 apply_migrations.sh
+
+CLAUDE.md

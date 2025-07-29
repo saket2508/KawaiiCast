@@ -7,8 +7,7 @@ const router = express.Router();
 // Health check
 router.get("/health", torrentController.getHealth);
 
-// Get torrent info (GET - magnet URI)
-router.get("/torrent/info", torrentController.getTorrentInfo);
+// Note: GET /torrent/info removed - frontend only uses POST
 
 // Get torrent info (POST - supports both magnet URIs and torrent files)
 router.post(
@@ -25,6 +24,9 @@ router.delete("/stream", torrentController.stopStream);
 
 // List active streams
 router.get("/streams", torrentController.listStreams);
+
+// List active torrents
+router.get("/torrents", torrentController.listTorrents);
 
 // Remove torrent
 router.delete("/torrent", torrentController.removeTorrent);

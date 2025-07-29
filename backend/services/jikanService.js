@@ -6,7 +6,6 @@ const JIKAN_API_URL = "https://api.jikan.moe/v4";
 const makeJikanRequest = async (endpoint) => {
   try {
     const url = `${JIKAN_API_URL}${endpoint}`;
-    console.log(`🔍 JIKAN API request: ${endpoint}`);
 
     const response = await fetch(url, {
       headers: {
@@ -125,9 +124,6 @@ export const getAllAnimeEpisodes = async (malId) => {
       }
     }
 
-    console.log(
-      `✅ Fetched ${allEpisodes.length} episodes for MAL ID ${malId}`
-    );
     return allEpisodes;
   } catch (error) {
     console.error(

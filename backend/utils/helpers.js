@@ -1,3 +1,5 @@
+import ffmpeg from "fluent-ffmpeg";
+
 // Format bytes to human readable format
 export const formatBytes = (bytes) => {
   if (bytes === 0) return "0 B";
@@ -37,6 +39,11 @@ export const isAudioFile = (filename) => {
   return ext && audioExtensions.includes(ext);
 };
 
+const subtitleExt = ["srt", "ass", "vtt"];
+
+export const isSubtitleFile = (filename) =>
+  subtitleExt.includes(filename.split(".").pop()?.toLowerCase());
+
 // Generate unique identifier for torrents
 export const getTorrentId = (input) => {
   if (typeof input === "string" && input.startsWith("magnet:")) {
@@ -64,6 +71,28 @@ export const prepareFileInfo = (torrentFiles) => {
     path: file.path,
     isVideo: isVideoFile(file.name),
     isAudio: isAudioFile(file.name),
+    isSubtitle: isSubtitleFile(file.name),
     isPlayable: isVideoFile(file.name) || isAudioFile(file.name),
   }));
 };
+
+// Probe for subtitles in a file
+export const probeForSubs = (file) =>
+  new Promise((resolve, reject) => {
+    ffmpeg(file.path).ffprobe((err, data) => {
+      if (err) {
+        console.error("Error probing for subs:", err);
+        resolve([]);
+        return;
+      }
+      const subs = data.streams
+        .filter((s) => s.codec_type === "subtitle")
+        .map((s, i) => ({
+          streamIndex: i, // 0-based inside the MKV
+          codec: s.codec_name, // "ass", "subrip"…
+          language: s.tags?.language, // "eng", "spa"…
+          title: s.tags?.title,
+        }));
+      resolve(subs);
+    });
+  });

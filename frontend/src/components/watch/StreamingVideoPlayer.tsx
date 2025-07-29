@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
   Play,
   Pause,
@@ -10,9 +10,11 @@ import {
   RotateCcw,
   Maximize,
   Minimize,
+  List,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useAutoTorrentStream } from "@/hooks/useAutoTorrentStream";
+import { FileSelector } from "@/components/FileSelector";
 import { EpisodeTorrent } from "@/types/api";
 
 export interface StreamingVideoPlayerProps {
@@ -43,6 +45,7 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [showFileSelector, setShowFileSelector] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState(false);
@@ -162,66 +165,48 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasNextEpisode, onPlayNextEpisode]);
 
-  // Set up video event listeners
-  useEffect(() => {
+  const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
+    setDuration(video.duration);
+    setVolume(video.volume);
+    // Seek to initial progress if provided
+    if (initialProgress > 0 && initialProgress < video.duration) {
+      video.currentTime = initialProgress;
+    }
+  }, [initialProgress]);
 
-    const handleLoadedMetadata = () => {
-      setDuration(video.duration);
-      setVolume(video.volume);
-      // Seek to initial progress if provided
-      if (initialProgress > 0 && initialProgress < video.duration) {
-        video.currentTime = initialProgress;
-      }
-    };
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const current = video.currentTime;
+    const total = video.duration;
+    setCurrentTime(current);
+    setDuration(total); // keep duration in sync
 
-    const handleTimeUpdate = () => {
-      const current = video.currentTime;
-      const total = video.duration;
-      setCurrentTime(current);
+    if (onProgressUpdate && total > 0) {
+      const progressPercent = (current / total) * 100;
+      onProgressUpdate(current, total, progressPercent);
+    }
 
-      // Call progress update callback
-      if (onProgressUpdate && total > 0) {
-        const progressPercent = (current / total) * 100;
-        onProgressUpdate(current, total, progressPercent);
-      }
+    if (hasNextEpisode && total > 0 && total - current <= 30) {
+      setShowNextEpisodePrompt(true);
+    }
+  }, [hasNextEpisode, onProgressUpdate]);
 
-      // Show next episode prompt near the end
-      if (hasNextEpisode && total > 0 && total - current <= 30) {
-        setShowNextEpisodePrompt(true);
-      }
-    };
+  const handleVolumeChange = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    setVolume(video.volume);
+    setIsMuted(video.muted);
+  }, []);
 
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    const handleVolumeChange = () => {
-      setVolume(video.volume);
-      setIsMuted(video.muted);
-    };
-    const handleEnded = () => {
-      setIsPlaying(false);
-      if (hasNextEpisode && onPlayNextEpisode) {
-        setShowNextEpisodePrompt(true);
-      }
-    };
-
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    video.addEventListener("play", handlePlay);
-    video.addEventListener("pause", handlePause);
-    video.addEventListener("volumechange", handleVolumeChange);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("volumechange", handleVolumeChange);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, [hasNextEpisode, onPlayNextEpisode, onProgressUpdate, initialProgress]);
+  const handleEnded = useCallback(() => {
+    setIsPlaying(false);
+    if (hasNextEpisode && onPlayNextEpisode) {
+      setShowNextEpisodePrompt(true);
+    }
+  }, [hasNextEpisode, onPlayNextEpisode]);
 
   // Update video source when stream URL changes
   useEffect(() => {
@@ -231,18 +216,19 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
     if (torrentStream.streamUrl && torrentStream.isReady) {
       video.src = torrentStream.streamUrl;
       video.load();
-    } else {
-      video.removeAttribute("src");
-      video.load();
     }
   }, [torrentStream.streamUrl, torrentStream.isReady]);
 
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
-      void torrentStream.stopStream();
+      if (torrentStream?.stopStream) {
+        console.log("stopping stream");
+        void torrentStream.stopStream();
+      }
     };
-  }, [torrentStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [torrentStream.stopStream]);
 
   // Controls visibility management
   const showControlsTemporarily = () => {
@@ -399,11 +385,40 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       onClick={handleContainerClick}
       onFocus={showControlsTemporarily}
     >
+      {/* File Selector Overlay */}
+      {showFileSelector && torrentStream.files.length > 0 && (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="max-w-lg w-full p-4">
+            <FileSelector
+              files={torrentStream.files}
+              selectedIndex={torrentStream.selectedFileIndex ?? -1}
+              onFileSelect={(index) => torrentStream.selectFile(index)}
+              onStartStream={() => setShowFileSelector(false)}
+              isStreaming={isPlaying}
+            />
+            <div className="flex justify-center mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setShowFileSelector(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <video
         ref={videoRef}
         className="w-full h-full"
         controls={false}
         preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onVolumeChange={handleVolumeChange}
+        onEnded={handleEnded}
       />
 
       {/* Next Episode Prompt */}
@@ -492,11 +507,23 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
             </div>
 
             <span className="text-white text-sm">
-              {formatTime(currentTime)} / {formatTime(duration)}
+              {formatTime(isNaN(currentTime) ? 0 : currentTime)} /{" "}
+              {formatTime(isNaN(duration) ? 0 : duration)}
             </span>
           </div>
 
           <div className="flex items-center space-x-2">
+            {/* Show File Selector button */}
+            {torrentStream.files.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowFileSelector(true)}
+                className="text-white hover:text-orange-500 hover:bg-gray-800"
+              >
+                <List size={20} />
+              </Button>
+            )}
             {hasNextEpisode && (
               <Button
                 variant="ghost"

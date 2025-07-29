@@ -120,7 +120,7 @@ export const AutoContinueVideoPlayer: React.FC<
 
   // Construct stream URL
   const streamUrl = `${
-    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api"
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
   }/torrent/stream?magnet=${encodeURIComponent(magnetUri)}`;
 
   // Resume playback if initial progress is provided

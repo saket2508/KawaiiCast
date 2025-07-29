@@ -1,7 +1,9 @@
 import { Anime, Episode, EpisodeTorrent } from "@/types/api";
 
 // Get API base URL from environment variable or fallback to relative path
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
+const API_BASE = `${
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+}/api`;
 
 // API Response type for search endpoint
 interface AnimeSearchResponse {

@@ -70,9 +70,9 @@ List all active streams
 
 ```bash
 PORT=8080                    # Server port (default: 8080)
-NODE_ENV=production         # Environment mode
+NODE_ENV=development         # Environment mode
 
-DB_HOST=localhost # Database
+DB_HOST=localhost # This is 'postgres' if running in docker
 DB_PORT=5432
 DB_NAME=your_db_name
 DB_USER=your_db_user

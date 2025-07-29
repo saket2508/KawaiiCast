@@ -5,8 +5,6 @@ import {
   REQUEST_TIMEOUT,
 } from "../config/torrentSources.js";
 
-// ===== UTILITY FUNCTIONS =====
-
 // Parse episode number from title
 const parseEpisodeNumber = (title) => {
   const match = title.match(/(?:ep(?:isode)?[\s\-:]*)?(\d{1,4})(?:v\d)?/i);
@@ -55,7 +53,6 @@ const createMagnetLink = (infoHash, title) => {
   return `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(title)}`;
 };
 
-// Standardize torrent object structure
 const createTorrentObject = (item, source) => {
   const title = (item.name || item.title || "").trim();
   const infoHash = item.hash || item.info_hash || "";
@@ -93,9 +90,6 @@ const createTorrentObject = (item, source) => {
   };
 };
 
-// ===== SOURCE-SPECIFIC SEARCH FUNCTIONS =====
-
-// Search torrents from Nyaa JSON API
 const searchNyaaAPI = async (query, category = "1_2") => {
   const source = TORRENT_SOURCES.NYAA_API;
   const searchParams = new URLSearchParams({
@@ -135,7 +129,6 @@ const searchNyaaAPI = async (query, category = "1_2") => {
   }
 };
 
-// Search torrents from AnimeTosho JSON API
 const searchAnimeTosho = async (query) => {
   const source = TORRENT_SOURCES.TOKYOTOSHO;
 
@@ -168,9 +161,6 @@ const searchAnimeTosho = async (query) => {
   }
 };
 
-// ===== ANIMETOSHO ID-BASED FUNCTIONS =====
-
-// Generate AnimeTosho API URL with parameters
 const buildAnimeToshoUrl = (quality = "all", aids, eids) => {
   const baseUrl = "https://feed.animetosho.org/json";
 
@@ -189,7 +179,7 @@ const buildAnimeToshoUrl = (quality = "all", aids, eids) => {
 const fetchAnimeToshoByIds = async (quality, aids, eids) => {
   try {
     const url = buildAnimeToshoUrl(quality, aids, eids);
-
+    console.log("source url:", url);
     const response = await fetch(url, {
       headers: {
         "User-Agent":
@@ -208,8 +198,6 @@ const fetchAnimeToshoByIds = async (quality, aids, eids) => {
   }
 };
 
-// ===== NEW HELPER FOR MULTIPLE TITLES =====
-// Generate episode search queries for an array of possible titles (e.g. English and Romaji)
 const generateQueriesFromTitles = (titles, episodeNumber) => {
   const querySet = new Set();
 
@@ -222,8 +210,6 @@ const generateQueriesFromTitles = (titles, episodeNumber) => {
 
   return Array.from(querySet);
 };
-
-// ===== MAIN SEARCH FUNCTIONS =====
 
 // Remove duplicates from torrent array
 const removeDuplicateTorrents = (torrents) => {
@@ -265,8 +251,6 @@ export const searchTorrents = async (
   sources = DEFAULT_SOURCE
 ) => {
   try {
-    console.log(`🔍 Searching torrents: "${query}" from sources: ${sources}`);
-
     const searchPromises = [];
 
     // Determine which sources to search
@@ -347,9 +331,9 @@ export const searchAnimeTorrents = async (
   alternateTitles = []
 ) => {
   try {
-    console.log("🔍 Searching anime torrents:", {
+    const searchStartTime = Date.now();
+    console.log("🔍 searchAnimeTorrents called", {
       animeTitle,
-      alternateTitles,
       episodeNumber,
       aids,
       eids,
@@ -357,53 +341,97 @@ export const searchAnimeTorrents = async (
     });
 
     let allTorrents = [];
-
-    // Method 1: ID-based search using AnimeTosho if IDs are provided
-    if (aids) {
-      try {
-        console.log(
-          `🎯 Using ID-based search: animeId=${aids}, episodeId=${eids}`
-        );
-        const idBasedTorrents = await getAnimeToshoByIds(quality, aids, eids);
-
-        if (idBasedTorrents.length > 0) {
-          console.log(
-            `✅ Found ${idBasedTorrents.length} torrents via ID-based search`
-          );
-          allTorrents = allTorrents.concat(idBasedTorrents);
-        }
-      } catch (error) {
-        console.warn(
-          "⚠️ ID-based search failed, falling back to text search:",
-          error.message
-        );
-      }
-    }
-
-    // Method 2: Text-based search
     const titlesToSearch = [animeTitle, ...alternateTitles];
-
-    console.log(
-      `📝 Using text-based search for titles: ${titlesToSearch.join(", ")}`
-    );
-
     const allQueries = generateQueriesFromTitles(titlesToSearch, episodeNumber);
 
-    for (const query of allQueries) {
-      const torrents = await searchTorrents(query, "1_2", "both");
-      const filtered = filterTorrentsByEpisode(torrents, episodeNumber);
+    // Create parallel search operations
+    const searchOperations = [];
 
-      if (filtered.length > 0) {
-        console.log(`✅ Found ${filtered.length} results for "${query}"`);
-        allTorrents = allTorrents.concat(filtered);
-        break; // Exit on first successful query
-      }
+    // Add ID-based search if available
+    if (aids) {
+      const idSearchPromise = getAnimeToshoByIds(quality, aids, eids)
+        .then((torrents) => ({
+          type: "id-based",
+          torrents,
+          success: torrents.length > 0,
+        }))
+        .catch((error) => {
+          console.warn("⚠️ ID-based search failed:", error.message);
+          return { type: "id-based", torrents: [], success: false };
+        });
+
+      searchOperations.push(idSearchPromise);
     }
+
+    // Add text-based queries to parallel operations
+    const textSearchPromise = Promise.allSettled(
+      allQueries.map(async (query) => {
+        try {
+          const torrents = await searchTorrents(query, "anime", "nyaa");
+          const filtered = filterTorrentsByEpisode(torrents, episodeNumber);
+          return {
+            type: "text-based",
+            query,
+            torrents: filtered,
+            success: filtered.length > 0,
+          };
+        } catch (error) {
+          console.warn(`Query failed: "${query}" - ${error.message}`);
+          return { type: "text-based", query, torrents: [], success: false };
+        }
+      })
+    ).then((results) => ({
+      type: "text-search-batch",
+      results: results
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
+        .filter((result) => result.success)
+        .sort((a, b) => b.torrents.length - a.torrents.length),
+    }));
+
+    searchOperations.push(textSearchPromise);
+
+    // Execute all search operations in parallel
+    console.log(
+      `🚀 Executing ${searchOperations.length} search operations in parallel:`
+    );
+    console.log(
+      `   - ${aids ? "ID-based search (AnimeTosho)" : "No ID-based search"}`
+    );
+    console.log(`   - Text-based search (${allQueries.length} queries)`);
+
+    const searchResults = await Promise.allSettled(searchOperations);
+
+    // Process all results
+    searchResults.forEach((result) => {
+      if (result.status === "fulfilled") {
+        const searchResult = result.value;
+
+        if (searchResult.type === "id-based" && searchResult.success) {
+          console.log(
+            `✅ ID-based search found ${searchResult.torrents.length} torrents`
+          );
+          allTorrents = allTorrents.concat(searchResult.torrents);
+        } else if (searchResult.type === "text-search-batch") {
+          const totalFound = searchResult.results.reduce(
+            (sum, r) => sum + r.torrents.length,
+            0
+          );
+          console.log(
+            `✅ Text-based search found ${totalFound} torrents from ${searchResult.results.length} successful queries`
+          );
+
+          searchResult.results.forEach((queryResult) => {
+            allTorrents = allTorrents.concat(queryResult.torrents);
+          });
+        }
+      }
+    });
 
     // Fallback: broader search if no specific matches
     if (allTorrents.length === 0) {
       console.warn(`⚠️ No specific matches found. Trying broader search.`);
-      const broadTorrents = await searchTorrents(animeTitle, "1_2", "both");
+      const broadTorrents = await searchTorrents(animeTitle, "anime", "nyaa");
       allTorrents = allTorrents.concat(broadTorrents);
     }
 
@@ -411,7 +439,14 @@ export const searchAnimeTorrents = async (
     const uniqueTorrents = removeDuplicateTorrents(allTorrents);
     const sortedTorrents = sortTorrents(uniqueTorrents);
 
-    console.log(`✅ Final result: ${sortedTorrents.length} unique torrents`);
+    // console.log(JSON.stringify(sortedTorrents, null, 2));
+
+    // Performance logging
+    const searchDuration = Date.now() - searchStartTime;
+    console.log(
+      `⚡ Search completed in ${searchDuration}ms - Found ${sortedTorrents.length} unique torrents`
+    );
+
     return sortedTorrents;
   } catch (error) {
     console.error("❌ Error in searchAnimeTorrents:", error);
@@ -419,9 +454,6 @@ export const searchAnimeTorrents = async (
   }
 };
 
-// ===== TORRENT FILTERING AND SORTING =====
-
-// Get best quality torrents for an anime episode
 export const getBestTorrents = (torrents, episodeNumber = null) => {
   let filtered = torrents;
 
@@ -463,9 +495,6 @@ export const getBestTorrents = (torrents, episodeNumber = null) => {
   });
 };
 
-// ===== SPECIALIZED SEARCH FUNCTIONS =====
-
-// Search for anime batch/season torrents
 export const searchAnimeBatch = async (animeTitle, season = null) => {
   const batchKeywords = ["batch", "complete", "season", "BD", "BluRay"];
   let query = animeTitle;
@@ -487,8 +516,6 @@ export const searchTorrentsFromSource = async (
   return await searchTorrents(query, category, source);
 };
 
-// ===== ANIMETOSHO ID-BASED EXPORTS =====
-
 // Get specific anime episodes from AnimeTosho using anime/episode IDs
 export const getAnimeToshoByIds = async (
   quality = "all",
@@ -496,10 +523,6 @@ export const getAnimeToshoByIds = async (
   episodeIds = null
 ) => {
   try {
-    console.log(
-      `🔍 Fetching AnimeTosho episodes: aids=${animeIds}, eids=${episodeIds}, quality=${quality}`
-    );
-
     const data = await fetchAnimeToshoByIds(quality, animeIds, episodeIds);
 
     if (!Array.isArray(data)) {
@@ -510,11 +533,30 @@ export const getAnimeToshoByIds = async (
       createTorrentObject(item, "AnimeTosho")
     );
 
-    console.log(`✅ Found ${torrents.length} AnimeTosho episodes`);
     return torrents;
   } catch (error) {
     console.error("❌ Error fetching AnimeTosho episodes:", error);
     return [];
+  }
+};
+
+// Fetches the AnimeTosho anime and episode IDs from the Ani.zip mappings API
+export const getAnimeToshoIds = async (animeId, episodeId) => {
+  try {
+    const response = await fetch(
+      `https://api.ani.zip/mappings?anilist_id=${animeId}`
+    );
+    const data = await response.json();
+
+    let epData = data.episodes[episodeId];
+
+    let aids = data.mappings?.anidb_id || null;
+    let eids = epData?.anidbEid || null;
+
+    return { aids, eids };
+  } catch (error) {
+    console.error("Error fetching AnimeTosho anime and episode IDs:", error);
+    return { aids: null, eids: null };
   }
 };
 

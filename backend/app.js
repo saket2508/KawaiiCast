@@ -10,8 +10,9 @@ import { createWebTorrentClient, corsOptions } from "./config/webTorrent.js";
 import torrentRoutes from "./routes/torrentRoutes.js";
 import animeRoutes from "./routes/animeRoutes.js";
 
-// Import controllers for cleanup
-import { activeTorrents } from "./controllers/torrentController.js";
+// Import services for cleanup
+import { startCleanupTimer, stopCleanupTimer } from "./services/cleanupService.js";
+import { destroyAllTorrents } from "./services/torrentManager.js";
 
 dotenv.config();
 
@@ -42,8 +43,11 @@ app.use("/api", animeRoutes);
 process.on("SIGINT", () => {
   console.log("\nShutting down gracefully...");
 
+  // Stop the cleanup timer
+  stopCleanupTimer();
+
   // Destroy all torrents
-  activeTorrents.forEach((torrent) => torrent.destroy());
+  destroyAllTorrents();
 
   // Destroy WebTorrent client
   client.destroy(() => {
@@ -56,6 +60,9 @@ process.on("SIGINT", () => {
 app.listen(PORT, () => {
   console.log(`🚀 WebTorrent Streaming Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  
+  // Start the stream cleanup timer
+  startCleanupTimer();
 });
 
 export default app;
