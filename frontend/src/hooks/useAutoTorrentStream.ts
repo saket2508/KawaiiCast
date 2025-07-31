@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { EpisodeTorrent } from "@/types/api";
 import { TorrentFile } from "@/types/torrent-stream";
 import { useTorrentInfoQuery } from "./useAnimeQueries";
@@ -10,7 +10,59 @@ interface AutoTorrentStreamState {
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
+interface UseAutoTorrentStreamOptions {
+  fallbackTorrents?: EpisodeTorrent[];
+  enableFallback?: boolean;
+}
+
+interface UseAutoTorrentStreamReturn {
+  // Data from TanStack Query
+  torrentInfo: unknown | null;
+  isLoading: boolean;
+  error: string | null;
+  isReady: boolean;
+  progress: number;
+
+  // Local state
+  streamUrl: string | null;
+  selectedFile: TorrentFile | null;
+
+  // Enhanced error information
+  errorType: string | null;
+  errorRetryable: boolean;
+  errorSuggestion: string | null;
+  serverAttempts: number | null;
+
+  // Fallback information
+  currentTorrentIndex: number;
+  totalTorrents: number;
+  hasMoreTorrents: boolean;
+  currentTorrent: EpisodeTorrent | null;
+
+  // Actions
+  stopStream: () => Promise<void>;
+  retry: () => void;
+  retryWithNextTorrent: () => void;
+  selectFile: (index: number) => void;
+
+  // Computed properties
+  files: TorrentFile[];
+  selectedFileIndex: number | null;
+  hasError: boolean;
+  canRetry: boolean;
+  isBuffering?: boolean;
+  fileName: string | undefined;
+  fileSize: number | undefined;
+  statusMessage: string | null;
+}
+
+export function useAutoTorrentStream(
+  torrent: EpisodeTorrent | null,
+  options?: UseAutoTorrentStreamOptions
+): UseAutoTorrentStreamReturn {
+  const { fallbackTorrents = [], enableFallback = false } = options || {};
+
+  const [currentTorrentIndex, setCurrentTorrentIndex] = useState(0);
   const [state, setState] = useState<AutoTorrentStreamState>({
     streamUrl: null,
     selectedFile: null,
@@ -21,14 +73,74 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     fileIndex: number;
   } | null>(null);
 
+  // Create available torrents array with fallbacks
+  const availableTorrents = useMemo(() => {
+    const torrents: EpisodeTorrent[] = [];
+    if (torrent) torrents.push(torrent);
+    if (enableFallback && fallbackTorrents.length > 0) {
+      torrents.push(...fallbackTorrents);
+    }
+    return torrents;
+  }, [torrent, fallbackTorrents, enableFallback]);
+
+  // Reset index when available torrents change
+  useEffect(() => {
+    setCurrentTorrentIndex(0);
+  }, [availableTorrents]);
+
+  // Get current torrent
+  const currentTorrent = availableTorrents[currentTorrentIndex] || null;
+
   // Use TanStack Query for torrent info fetching with smart retry logic
-  const torrentInfoQuery = useTorrentInfoQuery(torrent?.magnet || null, {
-    enabled: Boolean(torrent?.magnet),
+  const torrentInfoQuery = useTorrentInfoQuery(currentTorrent?.magnet || null, {
+    enabled: Boolean(currentTorrent?.magnet),
   });
+
+  // Handle torrent failures with automatic fallback
+  useEffect(() => {
+    if (
+      torrentInfoQuery.error &&
+      !torrentInfoQuery.isLoading &&
+      enableFallback
+    ) {
+      const error = torrentInfoQuery.error as { type?: string; retryable?: boolean };
+
+      // Check if we should try fallback torrents
+      const shouldFallback =
+        (error?.type === "PERMANENT" || error?.retryable === false) &&
+        currentTorrentIndex < availableTorrents.length - 1;
+
+      if (shouldFallback) {
+        console.log(
+          `🔄 Torrent ${currentTorrentIndex + 1} failed permanently, trying fallback ${currentTorrentIndex + 2}/${availableTorrents.length}`
+        );
+        setCurrentTorrentIndex((prev) => prev + 1);
+
+        // Clear previous state while switching
+        setState({
+          streamUrl: null,
+          selectedFile: null,
+        });
+        currentStreamRef.current = null;
+      }
+    }
+  }, [
+    torrentInfoQuery.error,
+    torrentInfoQuery.isLoading,
+    currentTorrentIndex,
+    availableTorrents.length,
+    enableFallback,
+  ]);
 
   // Process torrent info when query succeeds
   useEffect(() => {
-    if (torrentInfoQuery.data && torrent) {
+    console.log("📥 Processing torrent data:", {
+      hasData: !!torrentInfoQuery.data,
+      isLoading: torrentInfoQuery.isLoading,
+      hasTorrent: !!currentTorrent,
+    });
+
+    if (torrentInfoQuery.data && currentTorrent) {
       const torrentInfo = torrentInfoQuery.data;
 
       // Find the best playable file (backend sorts them by preference)
@@ -41,64 +153,95 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
           torrentInfo.torrentId
         )}&file_index=${selectedFile.index}`;
 
+        // Prevent unnecessary state updates
+        const newState = {
+          selectedFile,
+          streamUrl,
+        };
+
+        setState((prevState) => {
+          if (
+            prevState.streamUrl === newState.streamUrl &&
+            prevState.selectedFile?.index === newState.selectedFile?.index
+          ) {
+            console.log("⏭ Skipping duplicate state update");
+            return prevState; // No change needed
+          }
+          console.log("✅ Setting stream state:", selectedFile.name);
+          return newState;
+        });
+
         // Track current stream for cleanup
         currentStreamRef.current = {
           torrentId: torrentInfo.torrentId,
           fileIndex: selectedFile.index,
         };
-
-        setState({
-          selectedFile,
-          streamUrl,
-        });
       } else {
-        // Clear state if no playable files
-        setState({
-          selectedFile: null,
-          streamUrl: null,
+        console.log("❌ No playable files found");
+        setState((prevState) => {
+          if (!prevState.streamUrl && !prevState.selectedFile) {
+            return prevState; // Already cleared
+          }
+          return {
+            selectedFile: null,
+            streamUrl: null,
+          };
         });
         currentStreamRef.current = null;
       }
-    }
-  }, [torrentInfoQuery.data, torrent]);
-
-  // Clear state when no torrent
-  useEffect(() => {
-    if (!torrent?.magnet) {
-      setState({
-        streamUrl: null,
-        selectedFile: null,
+    } else if (
+      !torrentInfoQuery.data &&
+      !torrentInfoQuery.isLoading &&
+      currentTorrent
+    ) {
+      // Clear state when no data and not loading (but we have a torrent)
+      console.log("🧹 Clearing state - no data");
+      setState((prevState) => {
+        if (!prevState.streamUrl && !prevState.selectedFile) {
+          return prevState; // Already cleared
+        }
+        return {
+          selectedFile: null,
+          streamUrl: null,
+        };
       });
       currentStreamRef.current = null;
     }
-  }, [torrent?.magnet]);
+  }, [
+    torrentInfoQuery.data,
+    torrentInfoQuery.isLoading,
+    currentTorrent,
+    currentTorrentIndex,
+  ]);
 
-  // Dedicated cleanup effect for component unmount
-  useEffect(() => {
-    return () => {
-      // Component is unmounting, perform comprehensive cleanup
-      console.log(
-        "useAutoTorrentStream: Component unmounting, cleaning up resources"
-      );
+  // Note: State clearing is now handled in the main processing effect above
 
-      // Stop any active streams
-      if (currentStreamRef.current) {
-        const { torrentId, fileIndex } = currentStreamRef.current;
-        // Call backend to stop stream (async, but fire-and-forget on unmount)
-        fetch(
-          `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
-            torrentId
-          )}&file_index=${fileIndex}`,
-          { method: "DELETE" }
-        ).catch((error) => {
-          console.warn("Failed to cleanup stream on unmount:", error);
-        });
-      }
+  // // Dedicated cleanup effect for component unmount
+  // useEffect(() => {
+  //   return () => {
+  //     // Component is unmounting, perform comprehensive cleanup
+  //     console.log(
+  //       "useAutoTorrentStream: Component unmounting, cleaning up resources"
+  //     );
 
-      // Clear refs
-      currentStreamRef.current = null;
-    };
-  }, []); // Empty dependency - only runs on mount/unmount
+  //     // Stop any active streams
+  //     if (currentStreamRef.current) {
+  //       const { torrentId, fileIndex } = currentStreamRef.current;
+  //       // Call backend to stop stream (async, but fire-and-forget on unmount)
+  //       fetch(
+  //         `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+  //           torrentId
+  //         )}&file_index=${fileIndex}`,
+  //         { method: "DELETE" }
+  //       ).catch((error) => {
+  //         console.warn("Failed to cleanup stream on unmount:", error);
+  //       });
+  //     }
+
+  //     // Clear refs
+  //     currentStreamRef.current = null;
+  //   };
+  // }, []); // Empty dependency - only runs on mount/unmount
 
   // Stop streaming when component unmounts or torrent changes
   const stopStream = useCallback(async () => {
@@ -122,57 +265,116 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     }
   }, []); // No dependencies needed - uses refs
 
-  // Retry loading if there was an error
-  const retry = () => {
+  // Enhanced retry function with fallback support
+  const retry = useCallback(() => {
     torrentInfoQuery.refetch();
-  };
+  }, [torrentInfoQuery]);
 
-  const selectFile = (index: number) => {
-    if (!torrentInfoQuery.data) return;
+  const retryWithNextTorrent = useCallback(() => {
+    if (currentTorrentIndex < availableTorrents.length - 1) {
+      console.log(
+        `🔄 Manually switching to next torrent ${currentTorrentIndex + 2}/${availableTorrents.length}`
+      );
+      setCurrentTorrentIndex((prev) => prev + 1);
+    }
+  }, [currentTorrentIndex, availableTorrents.length]);
 
-    const file = torrentInfoQuery.data.files.find((f) => f.index === index);
-    if (!file) return;
+  const selectFile = useCallback(
+    (index: number) => {
+      if (!torrentInfoQuery.data) return;
 
-    const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
-      torrentInfoQuery.data.torrentId
-    )}&file_index=${index}`;
+      const file = torrentInfoQuery.data.files.find((f) => f.index === index);
+      if (!file) return;
 
-    // Update current stream tracking
-    currentStreamRef.current = {
-      torrentId: torrentInfoQuery.data.torrentId,
-      fileIndex: index,
-    };
+      const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+        torrentInfoQuery.data.torrentId
+      )}&file_index=${index}`;
 
-    setState({
-      selectedFile: file,
-      streamUrl,
-    });
-  };
+      // Update current stream tracking
+      currentStreamRef.current = {
+        torrentId: torrentInfoQuery.data.torrentId,
+        fileIndex: index,
+      };
+
+      setState({
+        selectedFile: file,
+        streamUrl,
+      });
+    },
+    [torrentInfoQuery.data]
+  );
+
+  const error = torrentInfoQuery.error as
+    | (Error & {
+        status?: number;
+        type?: string;
+        retryable?: boolean;
+        suggestion?: string;
+        attempts?: number;
+      })
+    | null;
+
+  // Calculate canRetry based on error retryability and fallback availability
+  const canRetry =
+    (error?.retryable ?? true) !== false ||
+    currentTorrentIndex < availableTorrents.length - 1;
 
   return {
     // Data from TanStack Query
     torrentInfo: torrentInfoQuery.data || null,
     isLoading: torrentInfoQuery.isLoading,
-    error: torrentInfoQuery.error?.message || null,
+    error: error?.message || null,
     isReady: torrentInfoQuery.data?.ready || false,
     progress: torrentInfoQuery.data?.progress || 0,
 
     // Local state
     ...state,
 
+    // Enhanced error information
+    errorType: error?.type || null,
+    errorRetryable: error?.retryable !== false,
+    errorSuggestion: error?.suggestion || null,
+    serverAttempts: error?.attempts || null,
+
+    // Fallback information
+    currentTorrentIndex,
+    totalTorrents: availableTorrents.length,
+    hasMoreTorrents: currentTorrentIndex < availableTorrents.length - 1,
+    currentTorrent,
+
     // Actions
     stopStream,
     retry,
+    retryWithNextTorrent,
     selectFile,
 
     // Computed properties for convenience
     files: torrentInfoQuery.data?.files || [],
     selectedFileIndex: state.selectedFile?.index ?? null,
     hasError: Boolean(torrentInfoQuery.error),
+    canRetry: !!canRetry,
     isBuffering:
       torrentInfoQuery.isLoading ||
       (torrentInfoQuery.data && !torrentInfoQuery.data.ready),
     fileName: state.selectedFile?.name,
     fileSize: state.selectedFile?.size,
+
+    // Status messages for UI
+    statusMessage: (() => {
+      if (torrentInfoQuery.isLoading) {
+        return availableTorrents.length > 1 && currentTorrentIndex > 0
+          ? `Loading fallback torrent ${currentTorrentIndex + 1}/${availableTorrents.length}...`
+          : "Loading torrent...";
+      }
+      if (error) {
+        return error.suggestion || error.message || "An error occurred";
+      }
+      if (torrentInfoQuery.data && !torrentInfoQuery.data.ready) {
+        return `Torrent loading... ${Math.round(
+          torrentInfoQuery.data.progress
+        )}%`;
+      }
+      return null;
+    })(),
   };
-};
+}

@@ -18,7 +18,8 @@ export const animeQueryKeys = {
 // Query keys for torrent operations
 export const torrentQueryKeys = {
   all: ["torrent"] as const,
-  info: (magnetUri: string) => [...torrentQueryKeys.all, "info", magnetUri] as const,
+  info: (magnetUri: string) =>
+    [...torrentQueryKeys.all, "info", magnetUri] as const,
 };
 
 // Search anime hook with debouncing handled by caller
@@ -160,13 +161,23 @@ export const useAnimeData = (query: string) => {
   };
 };
 
+// Enhanced error interface for torrent operations
+interface TorrentError extends Error {
+  status?: number;
+  type?: string;
+  retryable?: boolean;
+  attempts?: number;
+  suggestion?: string;
+}
+
 // Torrent info query hook with smart retry logic
 export const useTorrentInfoQuery = (
   magnetUri: string | null,
   options?: { enabled?: boolean }
 ) => {
-  const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-  
+  const BACKEND_URL =
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
   return useQuery({
     queryKey: torrentQueryKeys.info(magnetUri || ""),
     queryFn: async ({ signal }): Promise<TorrentInfo> => {
@@ -187,11 +198,22 @@ export const useTorrentInfoQuery = (
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || "Failed to get torrent info");
+
+        // Create enhanced error with server-provided metadata
+        const enhancedError: TorrentError = new Error(
+          error.error || "Failed to get torrent info"
+        );
+        enhancedError.status = response.status;
+        enhancedError.type = error.type || "UNKNOWN";
+        enhancedError.retryable = error.retryable !== false; // Default to retryable
+        enhancedError.attempts = error.attempts;
+        enhancedError.suggestion = error.suggestion;
+
+        throw enhancedError;
       }
 
       const torrentInfo: TorrentInfo = await response.json();
-      
+
       // If torrent is not ready, throw a special error to trigger retry
       if (!torrentInfo.ready) {
         throw new Error("TORRENT_NOT_READY");
@@ -203,29 +225,133 @@ export const useTorrentInfoQuery = (
     staleTime: 30 * 1000, // 30 seconds - torrent state can change
     gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
     retry: (failureCount, error) => {
-      // Don't retry on certain errors
-      if (error instanceof Error) {
-        // Don't retry if magnet URI is invalid or torrent not found
-        if (error.message.includes("invalid") || error.message.includes("not found")) {
+      const torrentError = error as TorrentError;
+
+      if (torrentError instanceof Error) {
+        // Don't retry permanent errors (server told us not to)
+        if (
+          torrentError.type === "PERMANENT" ||
+          torrentError.retryable === false
+        ) {
+          console.log(
+            `❌ Not retrying permanent error: ${torrentError.message}`
+          );
           return false;
         }
-        
-        // Special handling for torrent not ready - retry with shorter limit
-        if (error.message === "TORRENT_NOT_READY") {
-          return failureCount < 10; // Max 10 retries for readiness
+
+        // Defer to backend for infrastructure issues (limited client retry)
+        if (
+          torrentError.type === "RETRYABLE" &&
+          (torrentError.status ?? 0) >= 500
+        ) {
+          console.log(
+            `⚠ Infrastructure error, limited client retry: ${torrentError.message}`
+          );
+          return failureCount < 2; // Let server handle the heavy lifting
+        }
+
+        // Handle capacity issues with patience
+        if (torrentError.type === "CAPACITY" || torrentError.status === 503) {
+          console.log(
+            `⏳ Server capacity issue, patient retry: ${torrentError.message}`
+          );
+          return failureCount < 5; // More retries for capacity issues
+        }
+
+        // Rate limiting - be more aggressive with retries
+        if (torrentError.status === 429) {
+          console.log(
+            `🚦 Rate limited, patient retry: ${torrentError.message}`
+          );
+          return failureCount < 8; // Many retries with longer delays
+        }
+
+        // Network connectivity issues - aggressive retry
+        if (
+          torrentError.status === 0 ||
+          torrentError.message.includes("fetch")
+        ) {
+          console.log(
+            `🌐 Network issue, aggressive retry: ${torrentError.message}`
+          );
+          return failureCount < 5;
+        }
+
+        // Special handling for torrent not ready - increased limit
+        if (torrentError.message === "TORRENT_NOT_READY") {
+          console.log(
+            `⏳ Torrent not ready, extended retry: attempt ${failureCount + 1}`
+          );
+          return failureCount < 15; // Increased from 10
+        }
+
+        // Legacy handling for old error patterns
+        if (
+          torrentError.message.includes("invalid") ||
+          torrentError.message.includes("not found")
+        ) {
+          console.log(`❌ Invalid request, no retry: ${torrentError.message}`);
+          return false;
         }
       }
-      
-      // Retry up to 3 times for other errors (rate limiting, network issues)
+
+      // Default: moderate retry for unknown errors
+      console.log(`❓ Unknown error, default retry: ${torrentError?.message}`);
       return failureCount < 3;
     },
-    retryDelay: (attemptIndex) => {
-      // Progressive delay: 1s, 1.2s, 1.44s, etc. up to 3s max
+    retryDelay: (attemptIndex, error) => {
+      const torrentError = error as TorrentError;
+
+      // Rate limiting gets exponential backoff with longer max delay
+      if (torrentError?.status === 429) {
+        const backoffDelay = Math.min(5000 * Math.pow(2, attemptIndex), 60000); // 5s -> 60s max
+        console.log(`🚦 Rate limit delay: ${backoffDelay}ms`);
+        return backoffDelay;
+      }
+
+      // Server capacity issues get longer delays
+      if (torrentError?.type === "CAPACITY" || torrentError?.status === 503) {
+        const capacityDelay = Math.min(
+          3000 * Math.pow(1.5, attemptIndex),
+          20000
+        ); // 3s -> 20s max
+        console.log(`⏳ Capacity delay: ${capacityDelay}ms`);
+        return capacityDelay;
+      }
+
+      // Server infrastructure errors get moderate delays (let server retry first)
+      if (
+        torrentError?.type === "RETRYABLE" &&
+        (torrentError?.status ?? 0) >= 500
+      ) {
+        const infraDelay = Math.min(2000 * Math.pow(1.3, attemptIndex), 8000); // 2s -> 8s max
+        console.log(`⚠ Infrastructure delay: ${infraDelay}ms`);
+        return infraDelay;
+      }
+
+      // Network connectivity issues get fast retry initially, then back off
+      if (
+        torrentError?.status === 0 ||
+        torrentError?.message?.includes("fetch")
+      ) {
+        const networkDelay = Math.min(
+          1000 * Math.pow(1.8, attemptIndex),
+          10000
+        ); // 1s -> 10s max
+        console.log(`🌐 Network delay: ${networkDelay}ms`);
+        return networkDelay;
+      }
+
+      // Default progressive delay for other errors
       const baseDelay = 1000;
       const backoffMultiplier = 1.2;
       const maxDelay = 3000;
-      
-      return Math.min(baseDelay * Math.pow(backoffMultiplier, attemptIndex), maxDelay);
+      const defaultDelay = Math.min(
+        baseDelay * Math.pow(backoffMultiplier, attemptIndex),
+        maxDelay
+      );
+      console.log(`❓ Default delay: ${defaultDelay}ms`);
+      return defaultDelay;
     },
   });
 };

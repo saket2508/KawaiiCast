@@ -16,6 +16,59 @@ import {
 } from "../utils/torrentUtils.js";
 import { prepareFileInfo, probeForSubs, sortFiles, formatBytes } from "../utils/helpers.js";
 
+// Retry configuration for torrent operations
+const TORRENT_RETRY_CONFIG = {
+  maxAttempts: 3,
+  baseDelay: 2000, // 2 seconds
+  maxDelay: 30000, // 30 seconds
+  timeoutPerAttempt: 90000 // 90 seconds instead of 240
+};
+
+/**
+ * Classify error types for retry logic
+ * @param {Error} error - The error to classify
+ * @returns {string} Error classification
+ */
+export const classifyTorrentError = (error) => {
+  const message = error.message.toLowerCase();
+  
+  // Non-retryable permanent errors
+  if (message.includes('invalid magnet') || 
+      message.includes('malformed') ||
+      message.includes('invalid torrent') ||
+      message.includes('not a valid torrent') ||
+      message.includes('duplicate torrent')) {
+    return 'PERMANENT';
+  }
+  
+  // Server capacity issues (let client handle)
+  if (message.includes('server at capacity') ||
+      message.includes('rate limit') ||
+      message.includes('too many requests')) {
+    return 'CAPACITY';
+  }
+  
+  // Retryable infrastructure errors
+  if (message.includes('timeout') || 
+      message.includes('network') ||
+      message.includes('connection') ||
+      message.includes('enotfound') ||
+      message.includes('econnreset') ||
+      message.includes('econnrefused') ||
+      message.includes('could not fetch')) {
+    return 'RETRYABLE';
+  }
+  
+  // Default to retryable for unknown errors (conservative approach)
+  return 'RETRYABLE';
+};
+
+/**
+ * Sleep utility for retry delays
+ * @param {number} ms - Milliseconds to sleep
+ */
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Enforce torrent limits using LRU eviction
  */
@@ -48,7 +101,63 @@ export const enforceTorrentLimits = () => {
 };
 
 /**
- * Add torrent to WebTorrent client with capacity management
+ * Attempt to add torrent to client (single attempt)
+ * @param {Object} client - WebTorrent client
+ * @param {string|Buffer} torrentInput - Torrent input
+ * @param {string} torrentId - Torrent identifier
+ * @param {number} attemptNumber - Current attempt number
+ * @returns {Promise<Object>} Torrent object
+ */
+const attemptTorrentAdd = async (client, torrentInput, torrentId, attemptNumber) => {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Timeout: Could not fetch torrent metadata (attempt ${attemptNumber})`));
+    }, TORRENT_RETRY_CONFIG.timeoutPerAttempt);
+
+    try {
+      const newTorrent = client.add(torrentInput, {
+        destroyStoreOnDestroy: true,
+        storeCacheSlots: 20,
+      });
+
+      newTorrent.on("ready", () => {
+        clearTimeout(timeoutId);
+        const metadata = createTorrentMetadata(torrentId);
+        activeTorrents.set(torrentId, { torrent: newTorrent, metadata });
+        console.log(`✓ Torrent added successfully on attempt ${attemptNumber}: ${torrentId}`);
+        resolve(newTorrent);
+      });
+
+      newTorrent.on("error", (err) => {
+        clearTimeout(timeoutId);
+        console.error(`Torrent error on attempt ${attemptNumber}:`, err);
+
+        // Handle duplicate torrent error
+        if (err.message && err.message.includes("duplicate torrent")) {
+          const hash = err.message.match(/([a-fA-F0-9]{40})/)?.[1];
+          if (hash) {
+            const existingTorrent = findExistingTorrent(client, hash);
+            if (existingTorrent) {
+              const metadata = createTorrentMetadata(torrentId);
+              activeTorrents.set(torrentId, { torrent: existingTorrent, metadata });
+              console.log(`✓ Using existing duplicate torrent on attempt ${attemptNumber}: ${torrentId}`);
+              resolve(existingTorrent);
+              return;
+            }
+          }
+        }
+
+        reject(err);
+      });
+    } catch (syncError) {
+      clearTimeout(timeoutId);
+      reject(syncError);
+    }
+  });
+};
+
+/**
+ * Add torrent to WebTorrent client with retry logic and capacity management
  * @param {Object} client - WebTorrent client
  * @param {string|Buffer} torrentInput - Torrent input (magnet or buffer)
  * @param {string} torrentId - Torrent identifier
@@ -60,7 +169,9 @@ export const addTorrentToClient = async (client, torrentInput, torrentId) => {
     enforceTorrentLimits();
     
     if (isAtTorrentCapacity(activeTorrents)) {
-      throw new Error(`Server at capacity: ${activeTorrents.size}/${MAX_CONCURRENT_TORRENTS} torrents. Please try again later.`);
+      const error = new Error(`Server at capacity: ${activeTorrents.size}/${MAX_CONCURRENT_TORRENTS} torrents. Please try again later.`);
+      error.type = 'CAPACITY';
+      throw error;
     }
   }
 
@@ -76,56 +187,50 @@ export const addTorrentToClient = async (client, torrentInput, torrentId) => {
     if (existingTorrent) {
       const metadata = createTorrentMetadata(torrentId);
       activeTorrents.set(torrentId, { torrent: existingTorrent, metadata });
+      console.log(`✓ Using existing torrent from client: ${torrentId}`);
       return existingTorrent;
     }
 
-    // Add new torrent
-    torrent = await new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error("Timeout: Could not fetch torrent metadata"));
-      }, 240000);
-
+    // Attempt to add torrent with retry logic
+    let lastError;
+    for (let attempt = 1; attempt <= TORRENT_RETRY_CONFIG.maxAttempts; attempt++) {
       try {
-        const newTorrent = client.add(torrentInput, {
-          destroyStoreOnDestroy: true,
-          storeCacheSlots: 20,
-        });
-
-        newTorrent.on("ready", () => {
-          clearTimeout(timeoutId);
-          const metadata = createTorrentMetadata(torrentId);
-          activeTorrents.set(torrentId, { torrent: newTorrent, metadata });
-          resolve(newTorrent);
-        });
-
-        newTorrent.on("error", (err) => {
-          clearTimeout(timeoutId);
-          console.error("Torrent error:", err);
-
-          // Handle duplicate torrent error
-          if (err.message && err.message.includes("duplicate torrent")) {
-            const hash = err.message.match(/([a-fA-F0-9]{40})/)?.[1];
-            if (hash) {
-              const existingTorrent = findExistingTorrent(client, hash);
-              if (existingTorrent) {
-                const metadata = createTorrentMetadata(torrentId);
-                activeTorrents.set(torrentId, { torrent: existingTorrent, metadata });
-                resolve(existingTorrent);
-                return;
-              }
-            }
-          }
-
-          reject(err);
-        });
-      } catch (syncError) {
-        clearTimeout(timeoutId);
-        reject(syncError);
+        console.log(`Attempting to add torrent ${torrentId} (attempt ${attempt}/${TORRENT_RETRY_CONFIG.maxAttempts})`);
+        torrent = await attemptTorrentAdd(client, torrentInput, torrentId, attempt);
+        return torrent; // Success!
+      } catch (error) {
+        lastError = error;
+        const errorType = classifyTorrentError(error);
+        
+        // Don't retry permanent errors or on final attempt
+        if (errorType === 'PERMANENT' || errorType === 'CAPACITY' || attempt === TORRENT_RETRY_CONFIG.maxAttempts) {
+          console.error(`✗ Torrent add failed permanently on attempt ${attempt}: ${error.message}`);
+          error.type = errorType;
+          error.attempts = attempt;
+          throw error;
+        }
+        
+        // Calculate delay with exponential backoff
+        const delay = Math.min(
+          TORRENT_RETRY_CONFIG.baseDelay * Math.pow(2, attempt - 1),
+          TORRENT_RETRY_CONFIG.maxDelay
+        );
+        
+        console.log(`⚠ Torrent add attempt ${attempt} failed (${errorType}), retrying in ${delay}ms: ${error.message}`);
+        await sleep(delay);
       }
-    });
+    }
+
+    // This should never be reached, but just in case
+    if (lastError) {
+      lastError.type = classifyTorrentError(lastError);
+      lastError.attempts = TORRENT_RETRY_CONFIG.maxAttempts;
+      throw lastError;
+    }
   } else {
     // Update access info for existing torrent
     updateTorrentAccess(torrentData);
+    console.log(`✓ Using cached torrent: ${torrentId}`);
   }
 
   return torrent;
