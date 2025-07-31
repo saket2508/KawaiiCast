@@ -15,6 +15,8 @@ export interface WatchContextData {
   nextEpisodeNumber: number | null;
   previousEpisodeNumber: number | null;
   bestTorrent: EpisodeTorrent | null;
+  allTorrents: EpisodeTorrent[]; // All available torrents sorted by quality
+  fallbackTorrents: EpisodeTorrent[]; // Fallback torrents (excluding the best one)
   isLoading: boolean;
   error: Error | null;
 }
@@ -72,15 +74,18 @@ export const useWatchContext = (
   const nextEpisodeNumber = hasNextEpisode ? episodeNumber + 1 : null;
   const previousEpisodeNumber = hasPreviousEpisode ? episodeNumber - 1 : null;
 
-  // Get best torrent for current episode
+  // Get all torrents for current episode sorted by quality
   // Use torrents from episode data first, then from torrents API
   const availableTorrents = episode?.torrents?.length
     ? episode.torrents
     : torrentsData?.torrents || [];
 
-  const bestTorrent = availableTorrents.length
-    ? getBestTorrent(availableTorrents)
-    : null;
+  const allTorrents = availableTorrents.length
+    ? sortTorrentsByQuality(availableTorrents)
+    : [];
+
+  const bestTorrent = allTorrents.length > 0 ? allTorrents[0] : null;
+  const fallbackTorrents = allTorrents.length > 1 ? allTorrents.slice(1) : [];
 
   // Combined loading and error states
   const isLoading = Boolean(
@@ -98,13 +103,17 @@ export const useWatchContext = (
     nextEpisodeNumber,
     previousEpisodeNumber,
     bestTorrent,
+    allTorrents,
+    fallbackTorrents,
     isLoading,
     error: error as Error | null,
   };
 };
 
 // Helper function to get the best quality torrent
-const getBestTorrent = (torrents: EpisodeTorrent[]): EpisodeTorrent => {
+const sortTorrentsByQuality = (
+  torrents: EpisodeTorrent[]
+): EpisodeTorrent[] => {
   // Sort by quality preference (1080p > 720p > 480p) and then by seeders
   const qualityOrder = { "1080p": 3, "720p": 2, "480p": 1 };
 
@@ -119,5 +128,5 @@ const getBestTorrent = (torrents: EpisodeTorrent[]): EpisodeTorrent => {
 
     // Then by seeders
     return b.seeders - a.seeders;
-  })[0];
+  });
 };
