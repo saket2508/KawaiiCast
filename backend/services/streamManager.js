@@ -17,74 +17,6 @@ import {
 import { getStreamId } from "../utils/helpers.js";
 import { performStreamCleanup, isCleanupTimerRunning } from "./cleanupService.js";
 
-// Stream retry configuration
-const STREAM_RETRY_CONFIG = {
-  maxAttempts: 2,     // Max retry attempts per stream
-  retryDelay: 5000,   // 5 seconds delay between retries
-  retryableErrors: [
-    'stream error',
-    'connection',
-    'network',
-    'timeout',
-    'peer',
-    'econnreset',
-    'enotfound'
-  ]
-};
-
-/**
- * Classify stream errors for retry logic
- * @param {Error} error - The stream error
- * @returns {string} Error classification
- */
-const classifyStreamError = (error) => {
-  const message = error.message.toLowerCase();
-  
-  // Non-retryable permanent errors
-  if (message.includes('file not found') ||
-      message.includes('invalid file index') ||
-      message.includes('no such file') ||
-      message.includes('torrent not found') ||
-      message.includes('permission denied') ||
-      message.includes('access denied')) {
-    return 'PERMANENT';
-  }
-  
-  // Check for retryable error patterns
-  const isRetryable = STREAM_RETRY_CONFIG.retryableErrors.some(pattern => 
-    message.includes(pattern)
-  );
-  
-  return isRetryable ? 'RETRYABLE' : 'UNKNOWN';
-};
-
-/**
- * Attempt to retry a failed stream
- * @param {string} streamId - Stream identifier
- * @param {Object} streamParams - Original stream parameters
- * @returns {Promise<boolean>} Success status
- */
-const retryStream = async (streamId, streamParams) => {
-  try {
-    console.log(`🔄 Attempting stream retry for ${streamId}`);
-    
-    // Clean up the failed stream first
-    await performStreamCleanup(streamId, 'retry_preparation');
-    
-    // Wait for cleanup to complete
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Attempt to recreate the stream
-    await createVideoStream(streamParams);
-    
-    console.log(`✅ Stream retry successful for ${streamId}`);
-    return true;
-  } catch (retryError) {
-    console.error(`❌ Stream retry failed for ${streamId}:`, retryError);
-    return false;
-  }
-};
-
 /**
  * Create and start a video stream
  * @param {Object} params - Stream parameters
@@ -98,10 +30,8 @@ const retryStream = async (streamId, streamParams) => {
 export const createVideoStream = async ({ torrentIdentifier, fileIndex, file, req, res }) => {
   const streamId = getStreamId(torrentIdentifier, fileIndex);
   
-  // Create enhanced stream info with retry tracking
+  // Create enhanced stream info
   const streamInfo = createStreamInfo(torrentIdentifier, fileIndex, file);
-  streamInfo.retryCount = streamInfo.retryCount || 0;
-  streamInfo.originalParams = { torrentIdentifier, fileIndex, file, req, res };
   activeStreams.set(streamId, streamInfo);
   
   try {
@@ -153,66 +83,13 @@ export const createVideoStream = async ({ torrentIdentifier, fileIndex, file, re
       console.error(`Stream error for ${streamId}:`, err);
       streamInfo.errors.push({ type: 'stream_error', error: err.message, timestamp: Date.now() });
       
-      // Check if error is recoverable and retry attempts remaining
-      const errorType = classifyStreamError(err);
-      const shouldRetry = (errorType === 'RETRYABLE' || errorType === 'UNKNOWN') && 
-                         streamInfo.retryCount < STREAM_RETRY_CONFIG.maxAttempts;
+      await performStreamCleanup(streamId, 'stream_error');
       
-      if (shouldRetry) {
-        console.log(`⚠ Stream error (${errorType}) for ${streamId}, attempting retry ${streamInfo.retryCount + 1}/${STREAM_RETRY_CONFIG.maxAttempts}`);
-        streamInfo.retryCount++;
-        
-        // Don't send error response yet, attempt retry first
-        setTimeout(async () => {
-          try {
-            const retrySuccess = await retryStream(streamId, streamInfo.originalParams);
-            if (!retrySuccess) {
-              // Retry failed, perform cleanup and send error response
-              await performStreamCleanup(streamId, 'retry_failed');
-              
-              if (!res.headersSent) {
-                res.status(503).json({ 
-                  error: "Stream retry failed", 
-                  details: err.message,
-                  type: errorType,
-                  retryable: false,
-                  attempts: streamInfo.retryCount
-                });
-              }
-            }
-          } catch (retryError) {
-            console.error(`Retry attempt failed for ${streamId}:`, retryError);
-            await performStreamCleanup(streamId, 'retry_exception');
-            
-            if (!res.headersSent) {
-              res.status(503).json({ 
-                error: "Stream retry exception", 
-                details: retryError.message,
-                originalError: err.message,
-                type: errorType,
-                retryable: false
-              });
-            }
-          }
-        }, STREAM_RETRY_CONFIG.retryDelay);
-      } else {
-        // Non-recoverable error or max retries reached
-        console.error(`❌ Stream error (${errorType}) for ${streamId} - ${shouldRetry ? 'max retries reached' : 'non-recoverable'}`);
-        await performStreamCleanup(streamId, 'stream_error_permanent');
-        
-        if (!res.headersSent) {
-          try {
-            const statusCode = errorType === 'PERMANENT' ? 400 : 503;
-            res.status(statusCode).json({ 
-              error: "Stream error", 
-              details: err.message,
-              type: errorType,
-              retryable: false,
-              ...(streamInfo.retryCount > 0 && { attempts: streamInfo.retryCount })
-            });
-          } catch (responseError) {
-            console.error(`Error sending error response for ${streamId}:`, responseError);
-          }
+      if (!res.headersSent) {
+        try {
+          res.status(500).json({ error: "Stream error", details: err.message });
+        } catch (responseError) {
+          console.error(`Error sending error response for ${streamId}:`, responseError);
         }
       }
     };

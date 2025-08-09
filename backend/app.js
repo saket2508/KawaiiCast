@@ -4,24 +4,31 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 
 // Import configuration
-import { corsOptions } from "./config/webTorrent.js";
+import { createWebTorrentClient, corsOptions } from "./config/webTorrent.js";
 
 // Import routes
 import torrentRoutes from "./routes/torrentRoutes.js";
 import animeRoutes from "./routes/animeRoutes.js";
 
-// Import services
+// Import services for cleanup
 import { startCleanupTimer, stopCleanupTimer } from "./services/cleanupService.js";
 import { destroyAllTorrents } from "./services/torrentManager.js";
-import { initializeClientManager, gracefulClientShutdown } from "./services/clientManager.js";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Initialize WebTorrent client with error handling and recovery
-const client = initializeClientManager(app);
+// Initialize WebTorrent client
+const client = createWebTorrentClient();
+
+// Store client in app locals for access in controllers
+app.locals.webTorrentClient = client;
+
+// WebTorrent client event handlers
+client.on("error", (err) => {
+  console.error("WebTorrent client error:", err);
+});
 
 // Middleware
 app.use(morgan("combined"));
@@ -33,7 +40,7 @@ app.use("/", torrentRoutes);
 app.use("/api", animeRoutes);
 
 // Cleanup on exit
-process.on("SIGINT", async () => {
+process.on("SIGINT", () => {
   console.log("\nShutting down gracefully...");
 
   // Stop the cleanup timer
@@ -42,10 +49,11 @@ process.on("SIGINT", async () => {
   // Destroy all torrents
   destroyAllTorrents();
 
-  // Gracefully shutdown WebTorrent client
-  await gracefulClientShutdown(client);
-  
-  process.exit(0);
+  // Destroy WebTorrent client
+  client.destroy(() => {
+    console.log("WebTorrent client destroyed");
+    process.exit(0);
+  });
 });
 
 // Start server

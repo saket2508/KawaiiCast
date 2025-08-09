@@ -20,7 +20,6 @@ import { EpisodeTorrent } from "@/types/api";
 
 export interface StreamingVideoPlayerProps {
   torrent: EpisodeTorrent | null;
-  fallbackTorrents?: EpisodeTorrent[]; // Optional fallback torrents
   episodeNumber: number;
   hasNextEpisode: boolean;
   onPlayNextEpisode?: () => void;
@@ -37,7 +36,6 @@ export interface StreamingVideoPlayerProps {
 
 export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   torrent,
-  fallbackTorrents = [],
   episodeNumber,
   hasNextEpisode,
   onPlayNextEpisode,
@@ -62,11 +60,8 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
   const [videoLoaded, setVideoLoaded] = useState(false);
 
-  // Auto torrent streaming hook with fallback support
-  const torrentStream = useAutoTorrentStream(torrent, {
-    fallbackTorrents,
-    enableFallback: fallbackTorrents.length > 0,
-  });
+  // Auto torrent streaming hook
+  const torrentStream = useAutoTorrentStream(torrent);
 
   // Control visibility timer
   const controlsTimeoutRef = useRef<NodeJS.Timeout>(null);
@@ -255,21 +250,16 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
   // Manage loading overlay visibility
   useEffect(() => {
-    const shouldShowOverlay =
-      torrentStream.isLoading ||
-      torrentStream.isBuffering ||
-      isVideoBuffering ||
+    const shouldShowOverlay = 
+      torrentStream.isLoading || 
+      torrentStream.isBuffering || 
+      isVideoBuffering || 
       !videoLoaded;
-
+    
     if (shouldShowOverlay) {
       setShowLoadingOverlay(true);
     }
-  }, [
-    torrentStream.isLoading,
-    torrentStream.isBuffering,
-    isVideoBuffering,
-    videoLoaded,
-  ]);
+  }, [torrentStream.isLoading, torrentStream.isBuffering, isVideoBuffering, videoLoaded]);
 
   // Cleanup stream on unmount
   useEffect(() => {
@@ -280,7 +270,7 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [torrentStream.stopStream]);
 
   // Controls visibility management
   const showControlsTemporarily = () => {
@@ -433,13 +423,6 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
                   {torrentStream.fileName}
                 </p>
               )}
-              
-              {/* Show torrent quality info if fallbacks available */}
-              {torrentStream.totalTorrents > 1 && torrentStream.currentTorrent && (
-                <p className="text-orange-300 text-sm">
-                  Quality: {torrentStream.currentTorrent.quality} • Torrent {torrentStream.currentTorrentIndex + 1}/{torrentStream.totalTorrents}
-                </p>
-              )}
 
               {torrentStream.progress > 0 && (
                 <div className="space-y-2">
@@ -476,28 +459,11 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
           <h3 className="text-xl font-semibold text-white mb-2">
             Streaming Error
           </h3>
-          <p className="text-gray-400 mb-4">{torrentStream.error}</p>
-          
-          {/* Show torrent info if fallbacks are available */}
-          {torrentStream.totalTorrents > 1 && (
-            <p className="text-gray-500 text-sm mb-4">
-              Torrent {torrentStream.currentTorrentIndex + 1} of {torrentStream.totalTorrents}
-            </p>
-          )}
-          
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Button variant="primary" onClick={torrentStream.retry}>
-              <RotateCcw size={16} className="mr-2" />
-              Retry
-            </Button>
-            
-            {/* Show next torrent button if available */}
-            {torrentStream.hasMoreTorrents && (
-              <Button variant="secondary" onClick={torrentStream.retryWithNextTorrent}>
-                Try Next Quality
-              </Button>
-            )}
-          </div>
+          <p className="text-gray-400 mb-6">{torrentStream.error}</p>
+          <Button variant="primary" onClick={torrentStream.retry}>
+            <RotateCcw size={16} className="mr-2" />
+            Retry
+          </Button>
         </div>
       </div>
     );
@@ -517,16 +483,14 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       {showLoadingOverlay && (
         <div
           className={`absolute inset-0 z-30 transition-opacity duration-500 ${
-            torrentStream.isLoading ||
-            torrentStream.isBuffering ||
-            isVideoBuffering
+            torrentStream.isLoading || torrentStream.isBuffering || isVideoBuffering
               ? "opacity-100"
               : "opacity-0"
           }`}
           style={{
-            background: animeBackdrop
+            background: animeBackdrop 
               ? "linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 100%)"
-              : "rgb(17, 24, 39)",
+              : "rgb(17, 24, 39)"
           }}
         >
           {/* Anime Backdrop for overlay */}
