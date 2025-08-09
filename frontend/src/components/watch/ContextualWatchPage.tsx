@@ -173,7 +173,6 @@ export const ContextualWatchPage: React.FC<ContextualWatchPageProps> = ({
       */}
       <StreamingVideoPlayer
         torrent={context.bestTorrent}
-        fallbackTorrents={context.fallbackTorrents}
         episodeNumber={episodeNumber}
         hasNextEpisode={context.hasNextEpisode}
         onPlayNextEpisode={handleAutoPlayNext}

@@ -13,8 +13,7 @@ import {
   getTorrentData, 
   removeTorrent as removeTorrentService,
   getTorrentsInfo,
-  getActiveTorrentCount,
-  classifyTorrentError
+  getActiveTorrentCount
 } from "../services/torrentManager.js";
 import { 
   createVideoStream, 
@@ -23,35 +22,6 @@ import {
   getActiveStreamCount 
 } from "../services/streamManager.js";
 import { isCleanupTimerRunning } from "../services/cleanupService.js";
-
-/**
- * Classify stream-related errors for retry logic
- * @param {Error} error - The error to classify  
- * @returns {string} Error classification
- */
-const classifyStreamError = (error) => {
-  const message = error.message.toLowerCase();
-  
-  // Non-retryable errors
-  if (message.includes('file not found') ||
-      message.includes('invalid file index') ||
-      message.includes('no such file') ||
-      message.includes('torrent not found')) {
-    return 'PERMANENT';
-  }
-  
-  // Retryable infrastructure errors
-  if (message.includes('stream error') ||
-      message.includes('connection') ||
-      message.includes('network') ||
-      message.includes('timeout') ||
-      message.includes('peer') ||
-      message.includes('not ready')) {
-    return 'RETRYABLE';
-  }
-  
-  return 'RETRYABLE'; // Default to retryable
-};
 
 // Health check endpoint
 export const getHealth = (req, res) => {
@@ -125,35 +95,8 @@ export const postTorrentInfo = async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error("Error getting torrent info:", error);
-    
-    // Enhanced error response with retry guidance
-    const errorType = error.type || classifyTorrentError(error);
-    let statusCode = 500; // Default to server error
-    
-    // Set appropriate HTTP status codes
-    if (errorType === 'PERMANENT') {
-      statusCode = 400; // Bad Request for permanent failures
-    } else if (errorType === 'CAPACITY') {
-      statusCode = 503; // Service Unavailable for capacity issues
-    } else if (errorType === 'RETRYABLE') {
-      statusCode = 500; // Server Error for infrastructure issues
-    }
-    
-    res.status(statusCode).json({
+    res.status(500).json({
       error: error.message || "Failed to get torrent information",
-      type: errorType,
-      retryable: errorType !== 'PERMANENT',
-      torrentId: torrentId,
-      ...(error.attempts && { attempts: error.attempts }),
-      ...(errorType === 'CAPACITY' && { 
-        suggestion: "Server is at capacity. Please try again in a few minutes." 
-      }),
-      ...(errorType === 'RETRYABLE' && { 
-        suggestion: "Temporary network issue. You can retry this request." 
-      }),
-      ...(errorType === 'PERMANENT' && { 
-        suggestion: "Invalid torrent or magnet URI. Please check and try a different torrent." 
-      })
     });
   }
 };
@@ -177,10 +120,6 @@ export const streamTorrent = async (req, res) => {
     if (!torrentData) {
       return res.status(404).json({
         error: "Torrent not found. Please load torrent info first.",
-        type: 'RETRYABLE',
-        retryable: true,
-        action: 'reload_torrent',
-        suggestion: "The torrent needs to be loaded first. Please try fetching torrent info again."
       });
     }
     
@@ -189,24 +128,12 @@ export const streamTorrent = async (req, res) => {
     if (!torrent.ready) {
       return res.status(202).json({
         error: "Torrent not ready yet. Please wait.",
-        type: 'RETRYABLE',
-        retryable: true,
-        action: 'wait_and_retry',
-        suggestion: "The torrent is still loading. Please wait a moment and try again.",
-        progress: Math.round(torrent.progress * 100) || 0
       });
     }
 
     const file = torrent.files[fileIndex];
     if (!file) {
-      return res.status(404).json({ 
-        error: "File not found",
-        type: 'PERMANENT',
-        retryable: false,
-        fileIndex: fileIndex,
-        availableFiles: torrent.files.length,
-        suggestion: `File index ${fileIndex} not found. Available files: 0-${torrent.files.length - 1}`
-      });
+      return res.status(404).json({ error: "File not found" });
     }
 
     // Create and start the video stream
@@ -222,21 +149,8 @@ export const streamTorrent = async (req, res) => {
     console.error("Error starting stream:", error);
     
     if (!res.headersSent) {
-      const errorType = classifyStreamError(error);
-      const statusCode = errorType === 'PERMANENT' ? 400 : 503;
-      
-      res.status(statusCode).json({
+      res.status(500).json({
         error: error.message || "Failed to start stream",
-        type: errorType,
-        retryable: errorType !== 'PERMANENT',
-        torrentIdentifier: torrentIdentifier,
-        fileIndex: fileIndex,
-        ...(errorType === 'RETRYABLE' && {
-          suggestion: "Stream failed to start due to a temporary issue. Please try again."
-        }),
-        ...(errorType === 'PERMANENT' && {
-          suggestion: "Stream cannot be started. Please check the torrent and file index."
-        })
       });
     }
   }
