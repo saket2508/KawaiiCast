@@ -33,4 +33,8 @@ tasks/
 migrations/
 apply_migrations.sh
 
-CLAUDE.md
+#AI
+.claude/
+.cursor/
+!README.md
+*.md
