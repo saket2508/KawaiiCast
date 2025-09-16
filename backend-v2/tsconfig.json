@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "Bundler",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noFallthroughCasesInSwitch": true,
@@ -17,10 +17,10 @@
       "@controllers/*": ["controllers/*"],
       "@routes/*": ["routes/*"],
       "@services/*": ["services/*"],
+      "@middleware/*": ["middleware/*"],
       "@utils/*": ["utils/*"],
       "@types/*": ["types/*"]
     }
   },
   "include": ["src/**/*"]
 }
-

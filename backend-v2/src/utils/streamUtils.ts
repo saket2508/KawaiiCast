@@ -1,12 +1,12 @@
-import { STREAM_STATES, STREAM_TIMEOUT } from '@utils/constants';
-import { formatBytes } from '@utils/helpers';
-import type { StreamInfo } from '@types/index';
+import { STREAM_STATES, STREAM_TIMEOUT } from "@utils/constants";
+import { formatBytes } from "@utils/helpers";
+import type { StreamInfo } from "../types/index";
 
 export const addTrackedEventListener = (
   streamInfo: StreamInfo,
   target: any,
   event: string,
-  listener: (...args: any[]) => void,
+  listener: (...args: any[]) => void
 ) => {
   target.on(event, listener);
   streamInfo.eventListeners.push({ target, event, listener });
@@ -15,7 +15,7 @@ export const addTrackedEventListener = (
 export const createStreamInfo = (
   torrentIdentifier: string,
   fileIndex: number,
-  file: { name: string; length: number },
+  file: { name: string; length: number }
 ): StreamInfo => ({
   torrentIdentifier,
   fileIndex,
@@ -30,7 +30,11 @@ export const createStreamInfo = (
   errors: [],
 });
 
-export const formatStreamData = (streamId: string, streamInfo: StreamInfo, now: number) => ({
+export const formatStreamData = (
+  streamId: string,
+  streamInfo: StreamInfo,
+  now: number
+) => ({
   id: streamId,
   torrentIdentifier: streamInfo.torrentIdentifier,
   fileIndex: streamInfo.fileIndex,
@@ -52,24 +56,34 @@ export const formatStreamData = (streamId: string, streamInfo: StreamInfo, now: 
 });
 
 export const getCleanupStats = (
-  attempts: Map<string, { attempts: number; lastAttempt?: number; errors: string[] }>,
+  attempts: Map<
+    string,
+    { attempts: number; lastAttempt?: number; errors: string[] }
+  >
 ) => {
-  const totalAttempts = Array.from(attempts.values()).reduce((s, a) => s + a.attempts, 0);
+  const totalAttempts = Array.from(attempts.values()).reduce(
+    (s, a) => s + a.attempts,
+    0
+  );
   return {
     totalAttempts,
     failedCleanups: attempts.size,
-    avgAttemptsPerCleanup: attempts.size > 0 ? totalAttempts / attempts.size : 0,
+    avgAttemptsPerCleanup:
+      attempts.size > 0 ? totalAttempts / attempts.size : 0,
   };
 };
 
-export const createActivityTracker = (streamId: string, activeStreams: Map<string, StreamInfo>) => {
+export const createActivityTracker = (
+  streamId: string,
+  activeStreams: Map<string, StreamInfo>
+) => {
   return () => {
     try {
       const current = activeStreams.get(streamId);
-      if (current && current.state === STREAM_STATES.ACTIVE) current.lastActivity = Date.now();
+      if (current && current.state === STREAM_STATES.ACTIVE)
+        current.lastActivity = Date.now();
     } catch (err) {
       console.error(`Error updating stream activity for ${streamId}:`, err);
     }
   };
 };
-

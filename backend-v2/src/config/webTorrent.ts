@@ -5,6 +5,10 @@ export const createWebTorrentClient = () =>
     dht: true,
     tracker: {
       announce: [
+        // Prefer HTTP trackers to avoid UDP/dgram issues under Bun
+        'http://tracker.opentrackr.org:1337/announce',
+        'http://tracker.openbittorrent.com:80/announce',
+        // UDP trackers (kept as secondary)
         'udp://tracker.openbittorrent.com:80',
         'udp://tracker.opentrackr.org:1337',
         'udp://9.rarbg.to:2710',
@@ -34,4 +38,3 @@ export const fileUploadConfig = {
     else cb(new Error('Only .torrent files are allowed'));
   },
 };
-

@@ -1,3 +1,4 @@
+import './shims/env';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -6,8 +7,7 @@ import dotenv from 'dotenv';
 import { corsOptions, createWebTorrentClient } from '@config/webTorrent';
 import { startCleanupTimer, stopCleanupTimer } from '@services/cleanupService';
 import { destroyAllTorrents } from '@services/torrentManager';
-import { getActiveStreamCount } from '@services/streamManager';
-import { MAX_CONCURRENT_TORRENTS } from '@utils/constants';
+import torrentRoutes from '@routes/torrentRoutes';
 
 dotenv.config();
 
@@ -25,11 +25,8 @@ app.use(morgan('combined'));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 
-// Minimal health route to start; full parity routes will be ported incrementally
-app.get('/health', (_req, res) => {
-  const activeStreams = getActiveStreamCount ? getActiveStreamCount() : 0;
-  res.json({ status: 'ok', activeStreams, maxTorrents: MAX_CONCURRENT_TORRENTS });
-});
+// Routes
+app.use('/', torrentRoutes);
 
 process.on('SIGINT', () => {
   console.log('\nShutting down gracefully (v2)...');
@@ -53,4 +50,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-

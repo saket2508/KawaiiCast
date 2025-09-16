@@ -18,7 +18,8 @@ export const animeQueryKeys = {
 // Query keys for torrent operations
 export const torrentQueryKeys = {
   all: ["torrent"] as const,
-  info: (magnetUri: string) => [...torrentQueryKeys.all, "info", magnetUri] as const,
+  info: (magnetUri: string) =>
+    [...torrentQueryKeys.all, "info", magnetUri] as const,
 };
 
 // Search anime hook with debouncing handled by caller
@@ -165,8 +166,9 @@ export const useTorrentInfoQuery = (
   magnetUri: string | null,
   options?: { enabled?: boolean }
 ) => {
-  const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-  
+  const BACKEND_URL =
+    process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8081";
+
   return useQuery({
     queryKey: torrentQueryKeys.info(magnetUri || ""),
     queryFn: async ({ signal }): Promise<TorrentInfo> => {
@@ -191,7 +193,7 @@ export const useTorrentInfoQuery = (
       }
 
       const torrentInfo: TorrentInfo = await response.json();
-      
+
       // If torrent is not ready, throw a special error to trigger retry
       if (!torrentInfo.ready) {
         throw new Error("TORRENT_NOT_READY");
@@ -206,16 +208,19 @@ export const useTorrentInfoQuery = (
       // Don't retry on certain errors
       if (error instanceof Error) {
         // Don't retry if magnet URI is invalid or torrent not found
-        if (error.message.includes("invalid") || error.message.includes("not found")) {
+        if (
+          error.message.includes("invalid") ||
+          error.message.includes("not found")
+        ) {
           return false;
         }
-        
+
         // Special handling for torrent not ready - retry with shorter limit
         if (error.message === "TORRENT_NOT_READY") {
           return failureCount < 10; // Max 10 retries for readiness
         }
       }
-      
+
       // Retry up to 3 times for other errors (rate limiting, network issues)
       return failureCount < 3;
     },
@@ -224,8 +229,11 @@ export const useTorrentInfoQuery = (
       const baseDelay = 1000;
       const backoffMultiplier = 1.2;
       const maxDelay = 3000;
-      
-      return Math.min(baseDelay * Math.pow(backoffMultiplier, attemptIndex), maxDelay);
+
+      return Math.min(
+        baseDelay * Math.pow(backoffMultiplier, attemptIndex),
+        maxDelay
+      );
     },
   });
 };
