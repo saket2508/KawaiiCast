@@ -8,8 +8,10 @@ interface AutoTorrentStreamState {
   selectedFile: TorrentFile | null;
 }
 
-const BACKEND_URL =
-  process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8080";
+const TORRENT_API_URL =
+  process.env.NEXT_PUBLIC_TORRENT_API_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8080";
 
 export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
   const [state, setState] = useState<AutoTorrentStreamState>({
@@ -38,7 +40,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
 
       if (selectedFile) {
         // Generate stream URL
-        const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+        const streamUrl = `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
           torrentInfo.torrentId
         )}&file_index=${selectedFile.index}`;
 
@@ -87,7 +89,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
         const { torrentId, fileIndex } = currentStreamRef.current;
         // Call backend to stop stream (async, but fire-and-forget on unmount)
         fetch(
-          `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+          `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
             torrentId
           )}&file_index=${fileIndex}`,
           { method: "DELETE" }
@@ -108,7 +110,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
       try {
         console.log("stopping stream with file index:", fileIndex);
         await fetch(
-          `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+          `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
             torrentId
           )}&file_index=${fileIndex}`,
           { method: "DELETE" }
@@ -134,7 +136,7 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     const file = torrentInfoQuery.data.files.find((f) => f.index === index);
     if (!file) return;
 
-    const streamUrl = `${BACKEND_URL}/stream?torrent_id=${encodeURIComponent(
+    const streamUrl = `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
       torrentInfoQuery.data.torrentId
     )}&file_index=${index}`;
 

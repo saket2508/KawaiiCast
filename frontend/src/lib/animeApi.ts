@@ -19,9 +19,9 @@ interface AnimeSearchResponse {
 }
 
 // API Response type for other anime endpoints (trending, popular)
-interface AnimeApiResponse {
+interface AnimeListResponse {
   success: boolean;
-  data: Anime[];
+  results: Anime[];
   message?: string;
 }
 
@@ -124,14 +124,14 @@ export const animeApi = {
 
   // Get trending anime
   getTrending: async (): Promise<Anime[]> => {
-    const response = await apiRequest<AnimeApiResponse>("/anime/trending");
-    return response.data || [];
+    const response = await apiRequest<AnimeListResponse>("/anime/trending");
+    return response.results || [];
   },
 
   // Get popular anime
   getPopular: async (): Promise<Anime[]> => {
-    const response = await apiRequest<AnimeApiResponse>("/anime/popular");
-    return response.data || [];
+    const response = await apiRequest<AnimeListResponse>("/anime/popular");
+    return response.results || [];
   },
 
   // Get anime details by ID

@@ -166,8 +166,10 @@ export const useTorrentInfoQuery = (
   magnetUri: string | null,
   options?: { enabled?: boolean }
 ) => {
-  const BACKEND_URL =
-    process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8080";
+  const TORRENT_API_URL =
+    process.env.NEXT_PUBLIC_TORRENT_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:8080";
 
   return useQuery({
     queryKey: torrentQueryKeys.info(magnetUri || ""),
@@ -176,7 +178,7 @@ export const useTorrentInfoQuery = (
         throw new Error("No magnet URI provided");
       }
 
-      const response = await fetch(`${BACKEND_URL}/torrent/info`, {
+      const response = await fetch(`${TORRENT_API_URL}/torrent/info`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

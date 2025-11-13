@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   useAnimeDetails,
   useAnimeEpisodes,
@@ -23,23 +24,29 @@ export const useWatchContext = (
   animeId: number,
   episodeNumber: number
 ): WatchContextData => {
+  const DEFAULT_EPISODES_PER_PAGE = 25;
+  const [pageNumber, setPageNumber] = useState(() =>
+    Math.max(1, Math.ceil(episodeNumber / DEFAULT_EPISODES_PER_PAGE))
+  );
+
   const {
     data: anime,
     isLoading: animeLoading,
     error: animeError,
   } = useAnimeDetails(animeId);
 
-  // Calculate which page the episode should be on
-  // API typically returns 100 episodes per page (episodes 1-100 on page 1, 101-200 on page 2, etc.)
-  // This ensures we fetch the correct page containing the requested episode
-  const episodesPerPage = 100;
-  const pageNumber = Math.ceil(episodeNumber / episodesPerPage);
-
   const {
     data: episodeData,
     isLoading: episodesLoading,
     error: episodesError,
   } = useAnimeEpisodes(animeId, pageNumber);
+
+  useEffect(() => {
+    const perPage =
+      episodeData?.pagination?.items?.per_page || DEFAULT_EPISODES_PER_PAGE;
+    const expectedPage = Math.max(1, Math.ceil(episodeNumber / perPage));
+    setPageNumber((prev) => (prev === expectedPage ? prev : expectedPage));
+  }, [episodeNumber, episodeData?.pagination?.items?.per_page]);
 
   // Find the specific episode
   const episode =
