@@ -9,7 +9,7 @@ interface AutoTorrentStreamState {
 }
 
 const BACKEND_URL =
-  process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8081";
+  process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8080";
 
 export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
   const [state, setState] = useState<AutoTorrentStreamState>({

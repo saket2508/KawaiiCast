@@ -1,4 +1,4 @@
-import type { StreamInfo, TorrentMetadata } from '@types/index';
+import type { StreamInfo, TorrentMetadata } from '../types';
 
 export const STREAM_TIMEOUT = process.env.NODE_ENV === 'test' ? 10 * 1000 : 30 * 60 * 1000;
 export const CLEANUP_INTERVAL = process.env.NODE_ENV === 'test' ? 5 * 1000 : 5 * 60 * 1000;

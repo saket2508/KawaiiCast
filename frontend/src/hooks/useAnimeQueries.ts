@@ -167,7 +167,7 @@ export const useTorrentInfoQuery = (
   options?: { enabled?: boolean }
 ) => {
   const BACKEND_URL =
-    process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8081";
+    process.env.NEXT_TORRENT_CLIENT_API_URL || "http://localhost:8080";
 
   return useQuery({
     queryKey: torrentQueryKeys.info(magnetUri || ""),

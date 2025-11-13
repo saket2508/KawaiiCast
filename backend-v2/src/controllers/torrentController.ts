@@ -81,7 +81,7 @@ export const postTorrentInfo = async (req: any, res: any) => {
     const torrent = await addTorrentToClient(client, torrentInput!, torrentId!);
     const response = await buildTorrentResponse(torrent, torrentId!);
     //TODO: check file upload response type
-    if (isFileUpload) response.uploadedFileName = req.file.originalname;
+    // if (isFileUpload) response.uploadedFileName = req.file.originalname;
     res.json(response);
   } catch (error: any) {
     console.error("Error getting torrent info:", error);
@@ -154,7 +154,6 @@ export const stopStream = async (req: any, res: any) => {
       message: "Stream stop initiated but cleanup failed",
       error: result.reason,
       streamId,
-      details: result.errors,
     });
   } catch (error: any) {
     console.error(`Error stopping stream ${streamId}:`, error);

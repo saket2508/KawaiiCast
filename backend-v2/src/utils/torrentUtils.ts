@@ -43,7 +43,8 @@ export const hasActiveStreams = (torrentId: string, activeStreams: Map<string, {
 export const extractInfoHash = (magnetUri: string | Buffer | null) => {
   if (typeof magnetUri === 'string' && magnetUri.startsWith('magnet:')) {
     const m = magnetUri.match(/xt=urn:btih:([a-fA-F0-9]{40})/);
-    return m ? m[1].toLowerCase() : null;
+    const hash = m?.[1];
+    return hash ? hash.toLowerCase() : null;
   }
   return null;
 };
@@ -62,4 +63,3 @@ export const getTorrentsForEviction = (
   Array.from(activeTorrents.entries())
     .filter(([torrentId]) => !hasActiveStreams(torrentId, activeStreams))
     .sort((a, b) => a[1].metadata.lastAccessed - b[1].metadata.lastAccessed);
-
