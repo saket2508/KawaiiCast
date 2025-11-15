@@ -1,0 +1,9 @@
+.git
+node_modules
+dist
+Dockerfile
+.dockerignore
+.env*
+README.md
+src/**/*.test.ts
+src/**/*.spec.ts

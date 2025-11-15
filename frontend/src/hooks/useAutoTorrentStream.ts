@@ -29,41 +29,84 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     enabled: Boolean(torrent?.magnet),
   });
 
+  const buildStreamUrl = useCallback(
+    (torrentId: string, index: number) =>
+      `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
+        torrentId
+      )}&file_index=${index}`,
+    []
+  );
+
+  // Stop streaming when component unmounts or torrent changes
+  const stopStream = useCallback(async () => {
+    if (currentStreamRef.current) {
+      const { torrentId, fileIndex } = currentStreamRef.current;
+      try {
+        console.log("stopping stream with file index:", fileIndex);
+        await fetch(
+          `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
+            torrentId
+          )}&file_index=${fileIndex}`,
+          { method: "DELETE" }
+        );
+        console.log("Stream stopped successfully");
+      } catch (error) {
+        console.error("Error stopping stream:", error);
+      } finally {
+        // Clear stream reference after stopping (success or failure)
+        currentStreamRef.current = null;
+      }
+    }
+  }, []); // No dependencies needed - uses refs
+
+  const startStreamForFile = useCallback(
+    async (torrentId: string, file: TorrentFile) => {
+      const current = currentStreamRef.current;
+      const isDifferentStream =
+        current &&
+        (current.torrentId !== torrentId || current.fileIndex !== file.index);
+
+      if (isDifferentStream) {
+        await stopStream();
+      }
+
+      currentStreamRef.current = {
+        torrentId,
+        fileIndex: file.index,
+      };
+
+      setState({
+        selectedFile: file,
+        streamUrl: buildStreamUrl(torrentId, file.index),
+      });
+    },
+    [buildStreamUrl, stopStream]
+  );
+
   // Process torrent info when query succeeds
   useEffect(() => {
-    if (torrentInfoQuery.data && torrent) {
-      const torrentInfo = torrentInfoQuery.data;
+    if (!torrentInfoQuery.data || !torrent) {
+      return;
+    }
 
-      // Find the best playable file (backend sorts them by preference)
-      const playableFiles = torrentInfo.files.filter((file) => file.isPlayable);
-      const selectedFile = playableFiles.length > 0 ? playableFiles[0] : null;
+    const torrentInfo = torrentInfoQuery.data;
+    const playableFiles = torrentInfo.files.filter((file) => file.isPlayable);
+    const firstPlayable = playableFiles.length > 0 ? playableFiles[0] : null;
 
-      if (selectedFile) {
-        // Generate stream URL
-        const streamUrl = `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
-          torrentInfo.torrentId
-        )}&file_index=${selectedFile.index}`;
-
-        // Track current stream for cleanup
-        currentStreamRef.current = {
-          torrentId: torrentInfo.torrentId,
-          fileIndex: selectedFile.index,
-        };
-
-        setState({
-          selectedFile,
-          streamUrl,
-        });
+    const applyStreamUpdate = async () => {
+      if (firstPlayable) {
+        await startStreamForFile(torrentInfo.torrentId, firstPlayable);
       } else {
-        // Clear state if no playable files
+        await stopStream();
         setState({
           selectedFile: null,
           streamUrl: null,
         });
-        currentStreamRef.current = null;
       }
-    }
-  }, [torrentInfoQuery.data, torrent]);
+    };
+
+    void applyStreamUpdate();
+  }, [startStreamForFile, stopStream, torrent, torrentInfoQuery.data]);
 
   // Clear state when no torrent
   useEffect(() => {
@@ -103,54 +146,22 @@ export const useAutoTorrentStream = (torrent: EpisodeTorrent | null) => {
     };
   }, []); // Empty dependency - only runs on mount/unmount
 
-  // Stop streaming when component unmounts or torrent changes
-  const stopStream = useCallback(async () => {
-    if (currentStreamRef.current) {
-      const { torrentId, fileIndex } = currentStreamRef.current;
-      try {
-        console.log("stopping stream with file index:", fileIndex);
-        await fetch(
-          `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
-            torrentId
-          )}&file_index=${fileIndex}`,
-          { method: "DELETE" }
-        );
-        console.log("Stream stopped successfully");
-      } catch (error) {
-        console.error("Error stopping stream:", error);
-      } finally {
-        // Clear stream reference after stopping (success or failure)
-        currentStreamRef.current = null;
-      }
-    }
-  }, []); // No dependencies needed - uses refs
-
   // Retry loading if there was an error
   const retry = () => {
     torrentInfoQuery.refetch();
   };
 
-  const selectFile = (index: number) => {
-    if (!torrentInfoQuery.data) return;
+  const selectFile = useCallback(
+    (index: number) => {
+      if (!torrentInfoQuery.data) return;
 
-    const file = torrentInfoQuery.data.files.find((f) => f.index === index);
-    if (!file) return;
+      const file = torrentInfoQuery.data.files.find((f) => f.index === index);
+      if (!file) return;
 
-    const streamUrl = `${TORRENT_API_URL}/stream?torrent_id=${encodeURIComponent(
-      torrentInfoQuery.data.torrentId
-    )}&file_index=${index}`;
-
-    // Update current stream tracking
-    currentStreamRef.current = {
-      torrentId: torrentInfoQuery.data.torrentId,
-      fileIndex: index,
-    };
-
-    setState({
-      selectedFile: file,
-      streamUrl,
-    });
-  };
+      void startStreamForFile(torrentInfoQuery.data.torrentId, file);
+    },
+    [startStreamForFile, torrentInfoQuery.data]
+  );
 
   return {
     // Data from TanStack Query

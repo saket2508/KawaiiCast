@@ -24,9 +24,9 @@ export interface StreamingVideoPlayerProps {
   hasNextEpisode: boolean;
   onPlayNextEpisode?: () => void;
   onProgressUpdate?: (
+    progress: number,
     currentTime: number,
-    duration: number,
-    progress: number
+    duration: number
   ) => void;
   initialProgress?: number; // Resume time in seconds
   className?: string;
@@ -195,7 +195,7 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
     if (onProgressUpdate && total > 0) {
       const progressPercent = (current / total) * 100;
-      onProgressUpdate(current, total, progressPercent);
+      onProgressUpdate(progressPercent, current, total);
     }
 
     if (hasNextEpisode && total > 0 && total - current <= 30) {
@@ -250,16 +250,21 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
 
   // Manage loading overlay visibility
   useEffect(() => {
-    const shouldShowOverlay = 
-      torrentStream.isLoading || 
-      torrentStream.isBuffering || 
-      isVideoBuffering || 
+    const shouldShowOverlay =
+      torrentStream.isLoading ||
+      torrentStream.isBuffering ||
+      isVideoBuffering ||
       !videoLoaded;
-    
+
     if (shouldShowOverlay) {
       setShowLoadingOverlay(true);
     }
-  }, [torrentStream.isLoading, torrentStream.isBuffering, isVideoBuffering, videoLoaded]);
+  }, [
+    torrentStream.isLoading,
+    torrentStream.isBuffering,
+    isVideoBuffering,
+    videoLoaded,
+  ]);
 
   // Cleanup stream on unmount
   useEffect(() => {
@@ -483,14 +488,16 @@ export const StreamingVideoPlayer: React.FC<StreamingVideoPlayerProps> = ({
       {showLoadingOverlay && (
         <div
           className={`absolute inset-0 z-30 transition-opacity duration-500 ${
-            torrentStream.isLoading || torrentStream.isBuffering || isVideoBuffering
+            torrentStream.isLoading ||
+            torrentStream.isBuffering ||
+            isVideoBuffering
               ? "opacity-100"
               : "opacity-0"
           }`}
           style={{
-            background: animeBackdrop 
+            background: animeBackdrop
               ? "linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 100%)"
-              : "rgb(17, 24, 39)"
+              : "rgb(17, 24, 39)",
           }}
         >
           {/* Anime Backdrop for overlay */}

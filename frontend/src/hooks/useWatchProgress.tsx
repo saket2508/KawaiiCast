@@ -42,9 +42,9 @@ const validateWatchProgress = (data: unknown): data is WatchProgress => {
   if (!data || typeof data !== "object" || data === null) {
     return false;
   }
-  
+
   const progress = data as UnknownWatchProgress;
-  
+
   return (
     typeof progress.animeId === "number" &&
     typeof progress.episodeNumber === "number" &&
@@ -93,6 +93,7 @@ const loadWatchHistory = (): WatchHistory => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
+      console.log("[loadWatchHistory] No watch history found");
       return {};
     }
 
@@ -100,21 +101,34 @@ const loadWatchHistory = (): WatchHistory => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(stored);
+      console.log("[loadWatchHistory] Parsed watch history:", parsed);
     } catch (parseError) {
-      console.error("Failed to parse watch history JSON:", parseError);
+      console.error(
+        "[loadWatchHistory] Failed to parse watch history JSON:",
+        parseError
+      );
       // Clear corrupted data
+      console.log("[loadWatchHistory] Clearing corrupted watch history");
       localStorage.removeItem(STORAGE_KEY);
       return {};
     }
 
     // Validate data structure
     const validatedHistory = validateWatchHistory(parsed);
-
+    console.log(
+      "[loadWatchHistory] Validated watch history:",
+      validatedHistory
+    );
     // Convert lastWatched strings back to Date objects for valid entries
     Object.keys(validatedHistory).forEach((key) => {
       const progress = validatedHistory[key];
+      console.log("[loadWatchHistory] Progress:", progress);
       if (progress.lastWatched) {
         try {
+          console.log(
+            "[loadWatchHistory] Progress lastWatched:",
+            progress.lastWatched
+          );
           // Handle both string and existing Date objects
           if (typeof progress.lastWatched === "string") {
             progress.lastWatched = new Date(progress.lastWatched);
@@ -122,10 +136,16 @@ const loadWatchHistory = (): WatchHistory => {
 
           // Validate the date is valid
           if (isNaN(progress.lastWatched.getTime())) {
+            console.log(
+              "[loadWatchHistory] Progress lastWatched is invalid, using current date"
+            );
             progress.lastWatched = new Date();
           }
         } catch (dateError) {
-          console.warn(`Invalid date for progress ${key}, using current date:`, dateError);
+          console.warn(
+            `[loadWatchHistory] Invalid date for progress ${key}, using current date:`,
+            dateError
+          );
           progress.lastWatched = new Date();
         }
       } else {
@@ -133,6 +153,10 @@ const loadWatchHistory = (): WatchHistory => {
       }
     });
 
+    console.log(
+      "[loadWatchHistory] Returning validated watch history:",
+      validatedHistory
+    );
     return validatedHistory;
   } catch (error) {
     console.error("Failed to load watch history:", error);
@@ -152,6 +176,7 @@ const saveWatchHistory = (history: WatchHistory): boolean => {
 
   try {
     const serialized = JSON.stringify(history);
+    console.log("[saveWatchHistory] Saving watch history:", serialized);
     localStorage.setItem(STORAGE_KEY, serialized);
     return true;
   } catch (error) {
@@ -161,37 +186,54 @@ const saveWatchHistory = (history: WatchHistory): boolean => {
         error.name === "QuotaExceededError" ||
         error.name === "NS_ERROR_DOM_QUOTA_REACHED"
       ) {
-        console.warn("localStorage quota exceeded, attempting cleanup...");
-
+        console.warn(
+          "[saveWatchHistory] localStorage quota exceeded, attempting cleanup..."
+        );
+        console.log("[saveWatchHistory] History:", history);
         // Try to free up space by removing oldest entries
         const sortedEntries = Object.entries(history).sort(
           ([, a], [, b]) => a.lastWatched.getTime() - b.lastWatched.getTime()
         );
-
+        console.log("[saveWatchHistory] Sorted entries:", sortedEntries);
         // Keep only the most recent 50 entries
         const recentEntries = sortedEntries.slice(-50);
+        console.log("[saveWatchHistory] Recent entries:", recentEntries);
         const cleanedHistory: WatchHistory = {};
 
         recentEntries.forEach(([key, value]) => {
           cleanedHistory[key] = value;
         });
-
+        console.log("[saveWatchHistory] Cleaned history:", cleanedHistory);
         try {
           const cleanedSerialized = JSON.stringify(cleanedHistory);
+          console.log(
+            "[saveWatchHistory] Cleaned serialized:",
+            cleanedSerialized
+          );
           localStorage.setItem(STORAGE_KEY, cleanedSerialized);
           console.log(
             `Cleaned up watch history, kept ${recentEntries.length} most recent entries`
           );
+          console.log("[saveWatchHistory] Cleanup successful");
           return true;
         } catch (cleanupError) {
-          console.error("Failed to save even after cleanup:", cleanupError);
+          console.error(
+            "[saveWatchHistory] Failed to save even after cleanup:",
+            cleanupError
+          );
           return false;
         }
       } else {
-        console.error("Failed to save watch history:", error.message);
+        console.error(
+          "[saveWatchHistory] Failed to save watch history:",
+          error.message
+        );
       }
     } else {
-      console.error("Unknown error saving watch history:", error);
+      console.error(
+        "[saveWatchHistory] Unknown error saving watch history:",
+        error
+      );
     }
     return false;
   }
@@ -217,7 +259,9 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
     saveTimeoutRef.current = setTimeout(() => {
       const success = saveWatchHistory(history);
       if (!success) {
-        console.warn("Failed to save watch progress to localStorage");
+        console.warn(
+          "[useWatchProgress] Failed to save watch progress to localStorage"
+        );
         // Could emit an event here for UI notification if needed
       }
     }, 100); // 100ms debounce
@@ -247,11 +291,20 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
   // Update progress for current episode
   const updateProgress = useCallback(
     (progress: number, currentTime: number, duration: number) => {
+      console.log(
+        "[updateProgress] update params:",
+        progress,
+        currentTime,
+        duration
+      );
       const completed = progress >= 90; // Consider 90%+ as completed
       const minWatchTime = 30; // Only save progress after watching for 30 seconds
 
       // Don't save very early progress or very short videos
       if (currentTime < minWatchTime || duration < 60) {
+        console.log(
+          "[updateProgress] Not saving progress because currentTime < minWatchTime or duration < 60"
+        );
         return;
       }
 
@@ -264,7 +317,7 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
         lastWatched: new Date(),
         completed,
       };
-
+      console.log("[updateProgress] New progress:", newProgress);
       setWatchHistory((prev) => {
         const updated = {
           ...prev,
@@ -301,6 +354,7 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
 
   // Remove progress for specific episode
   const clearProgress = useCallback(() => {
+    console.log("[clearProgress] Clearing progress for episode:", progressKey);
     setWatchHistory((prev) => {
       const updated = { ...prev };
       delete updated[progressKey];
@@ -314,6 +368,7 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
   const getEpisodeProgress = useCallback(
     (episodeNum: number): WatchProgress | undefined => {
       const key = createProgressKey(animeId, episodeNum);
+      console.log("[getEpisodeProgress] Getting progress for episode:", key);
       return watchHistory[key];
     },
     [animeId, watchHistory]
@@ -329,11 +384,17 @@ export const useWatchProgress = (animeId: number, episodeNumber: number) => {
   // Get resume time (null if episode is completed or never watched)
   const getResumeTime = useCallback((): number => {
     if (!currentProgress || currentProgress.completed) {
+      console.log(
+        "[getResumeTime] No current progress or episode is completed"
+      );
       return 0;
     }
 
     // Don't resume if very close to beginning or end
     if (currentProgress.currentTime < 30 || currentProgress.progress > 95) {
+      console.log(
+        "[useWatchProgress] Not resuming because currentTime < 30 or progress > 95"
+      );
       return 0;
     }
 

@@ -20,7 +20,7 @@ cd KawaiiCast
 
 ### 2. Start the stack
 
-Spin up PostgreSQL, the Express backend and the Next.js frontend in one go using Docker Compose:
+Spin up PostgreSQL, the Bun/TypeScript backend and the Next.js frontend in one go using Docker Compose:
 
 ```bash
 docker-compose up
@@ -29,8 +29,8 @@ docker-compose up
 Compose will:
 
 - Launch **PostgreSQL 14** (mapped to `localhost:5432`).
-- Build & start the **backend** server (available at `http://localhost:8080`).
-- Build & start the **frontend** (available at `http://localhost:3000`).
+- Build & start the **backend-v2** service (Bun + Express, available at `http://localhost:8080`).
+- Build & start the **frontend** (Next.js, available at `http://localhost:3000`).
 
 You can follow the combined logs with:
 
