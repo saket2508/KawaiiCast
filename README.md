@@ -46,15 +46,16 @@ Once all containers are healthy, open your browser at `http://localhost:3000` to
 
 ### Backend
 
-- Organise and clean up controllers/modules code. It can be more readable.
-- Fetch season/arc details for specific anime episode.
-- Refine torrent search logic. Use multiple sources and include season/arc name in the queries.
-- Figure out deployment for personal use.
+- Add automated integration/e2e coverage for the torrent → stream pipeline so regressions are caught before shipping.
+- Expose richer observability (structured logs, `/metrics` or extended `/health`) covering cleanup timers, torrent cache size, etc.
+- Layer basic auth/rate-limiting on the API to keep self-hosted instances safe when exposed beyond the LAN.
+- Improve torrent search quality (multi-source queries, season/arc metadata) once the new stack stabilises.
 
 ### Frontend
 
-- Organise and clean up hooks for fetching anime titles and media playback
-- Handle torrent server-side errors with retry logic while fetching magnets & streaming playable files
-- Video playback controls UX: show video length, allow user to skip
-- Fix `useWatchProgress` hook for saving progress to localstorage.
-- Add new routes for trending and library
+- Harden the watch experience with clearer error states/retry flows when torrent info or streams fail.
+- Ship the missing “Trending”/“Library” routes plus surfacing of watch-progress data across the UI.
+- Add lightweight e2e smoke tests (Playwright/Cypress) that hit a running docker-compose stack.
+- Polish playback controls (subtitle selection, quality picker) now that the backend surfaces embedded track info.
+
+> Track each bullet using GitHub Issues so progress on backend-v2 + the Docker stack remains visible.
